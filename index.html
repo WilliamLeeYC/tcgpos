@@ -1396,17 +1396,29 @@ const cancelSale = (saleId, e) => {
   e && e.stopPropagation();
   const sale = sales.find(s=>s.id===saleId);
   if(!sale) return;
-  if(!confirm(`Annuler cette vente de ${fmt(sale.total)}€ ?\n\nLe stock sera remis à jour.`)) return;
+  if(!confirm(`Annuler cette vente de ${fmt(sale.total)}€ ?\n\nLe stock sera remis à jour et la caisse ajustée.`)) return;
+
   // Remettre le stock
   sale.items.forEach(item=>{
     const card = cards.find(c=>c.name===item.name);
     if(card) card.stock += item.qty;
   });
-  // Remettre la caisse
+  // Ajuster la caisse
   cashRegister = Math.max(0, cashRegister - sale.total);
   sales = sales.filter(s=>s.id!==saleId);
-  if(isOnline && currentUser) supa.from("sales").delete().eq("id",saleId).then(()=>{});
-  persist(); render(); toast("Vente annulée — stock remis à jour ✓","#F59E0B");
+  persistLocal();
+
+  // Supabase
+  if(isOnline && currentUser){
+    const uid = currentUser.id;
+    Promise.all([
+      supa.from("sales").delete().eq("id", saleId),
+      supa.from("cards").upsert(cards.map(c=>cardToDb(c,uid))),
+      supa.from("profiles").upsert({id:uid, cash_register:cashRegister, role:userRole},{onConflict:"id"}),
+    ]).then(()=>setSyncStatus("synced","✓ Sauvegardé")).catch(e=>console.error(e));
+  }
+  render();
+  toast("Vente annulée — stock et caisse remis à jour ✓","#F59E0B");
 };
 
 // ── VENTE MANUELLE ────────────────────────────────────────────────────────────
@@ -1558,17 +1570,28 @@ const startSession = () => {
   const fraisInput = document.getElementById("session-frais-input");
   const fraisStand = fraisInput ? (parseFloat(fraisInput.value)||0) : 0;
   session = { id:genId(), startTs:Date.now(), startCash:cashRegister, salesIds:[], fraisStand };
-  // Enregistrer les frais de stand dans la trésorerie si > 0
   if(fraisStand > 0){
     treasury.push({ id:genId(), date:new Date().toLocaleString("fr-CA"), ts:Date.now(), type:"frais", fraisCat:"stand", desc:"Frais de stand brocante", amount:fraisStand });
   }
-  persist(); render(); toast("Session démarrée ! 🚀","#A78BFA");
+  persistLocal();
+  // Insérer immédiatement dans Supabase
+  if(isOnline && currentUser){
+    const uid = currentUser.id;
+    supa.from("brocante_sessions").upsert(sessionToDb(session, uid)).then(()=>{});
+    if(fraisStand > 0) supa.from("treasury").upsert(treasury.map(t=>treasuryToDb(t,uid))).then(()=>{});
+    supa.from("profiles").upsert({id:uid, cash_register:cashRegister, role:userRole},{onConflict:"id"}).then(()=>{});
+  }
+  render(); toast("Session démarrée ! 🚀","#A78BFA");
 };
 
 const cancelSession = () => {
   if(!session) return;
   const sessionSaleIds = session.salesIds||[];
   const sessionSales = sales.filter(s=>sessionSaleIds.includes(s.id));
+  const sessionId = session.id;
+  const startCashSaved = session.startCash;
+  const sessionStart = session.startTs;
+
   // Remettre le stock
   sessionSales.forEach(sale=>{
     sale.items.forEach(item=>{
@@ -1578,18 +1601,25 @@ const cancelSession = () => {
   });
   // Supprimer les ventes
   sales = sales.filter(s=>!sessionSaleIds.includes(s.id));
-  // Supprimer frais de stand
-  const sessionStart = session.startTs;
+  // Supprimer frais de stand liés à cette session
   treasury = treasury.filter(e=>!(e.type==="frais"&&e.fraisCat==="stand"&&Math.abs((e.ts||0)-sessionStart)<10000));
   // Remettre la caisse au départ
-  cashRegister = session.startCash;
-  // Supprimer dans Supabase
-  if(isOnline && currentUser){
-    supa.from("brocante_sessions").update({ended:true}).eq("id",session.id).then(()=>{});
-    if(sessionSaleIds.length>0) supa.from("sales").delete().in("id",sessionSaleIds).then(()=>{});
-  }
+  cashRegister = startCashSaved;
   session = null;
-  persist(); render(); toast("Session annulée — stock et caisse remis à zéro ✓","#EF4444");
+  persistLocal();
+
+  // Supabase — tout supprimer proprement
+  if(isOnline && currentUser){
+    const uid = currentUser.id;
+    Promise.all([
+      supa.from("brocante_sessions").delete().eq("id", sessionId),
+      sessionSaleIds.length>0 ? supa.from("sales").delete().in("id", sessionSaleIds) : Promise.resolve(),
+      supa.from("cards").upsert(cards.map(c=>cardToDb(c,uid))),
+      supa.from("treasury").upsert(treasury.map(t=>treasuryToDb(t,uid))),
+      supa.from("profiles").upsert({id:uid, cash_register:cashRegister, role:userRole},{onConflict:"id"}),
+    ]).then(()=>setSyncStatus("synced","✓ Sauvegardé")).catch(e=>{ console.error(e); setSyncStatus("offline","⚠ Erreur sync"); });
+  }
+  render(); toast("Session annulée — stock et caisse remis à zéro ✓","#EF4444");
 };
 
 const endSession = () => {
@@ -1607,13 +1637,26 @@ const endSession = () => {
   const durStr      = dur<60 ? `${dur} min` : `${Math.floor(dur/60)}h${String(dur%60).padStart(2,"0")}`;
 
   // Sauvegarder le bilan dans treasury AVANT de vider la session
-  treasury.unshift({id:genId(),date:new Date().toLocaleString("fr-CA"),ts:Date.now(),type:"session_bilan",
-    desc:`Session brocante · ${sessionSales.length} ventes · ${durStr}`,amount:revenu});
+  const bilanEntry = {id:genId(), date:new Date().toLocaleString("fr-CA"), ts:Date.now(), type:"session_bilan",
+    desc:`Session brocante · ${sessionSales.length} ventes · ${durStr}`, amount:revenu};
+  treasury.unshift(bilanEntry);
+  const sessionId = session.id;
 
   // Mettre à jour la caisse et vider la session
   cashRegister = startCash + revenu;
   session = null;
-  persist(); render();
+  persistLocal();
+
+  // Supabase — marquer la session comme terminée + sauver tout
+  if(isOnline && currentUser){
+    const uid = currentUser.id;
+    Promise.all([
+      supa.from("brocante_sessions").update({ended:true}).eq("id", sessionId),
+      supa.from("treasury").upsert([treasuryToDb(bilanEntry, uid)]),
+      supa.from("profiles").upsert({id:uid, cash_register:cashRegister, role:userRole},{onConflict:"id"}),
+    ]).then(()=>setSyncStatus("synced","✓ Session clôturée")).catch(e=>console.error(e));
+  }
+  render();
 
   // Afficher le bilan
   const bc = document.getElementById("bilan-content");
@@ -2367,7 +2410,19 @@ const confirmSale = () => {
   if(session){ session.salesIds = [...(session.salesIds||[]), sale.id]; }
   cards=cards.map(c=>{ const ci=cart.find(i=>i.id===c.id); return ci?{...c,stock:c.stock-ci.qty}:c; });
   cashRegister = cashRegister + sale.total;
-  persist(); cart=[]; cartDiscount=0; cartManualTotal=null; updateBadge(); closePay();
+  persistLocal(); cart=[]; cartDiscount=0; cartManualTotal=null; updateBadge(); closePay();
+
+  // Sync immédiat vers Supabase
+  if(isOnline && currentUser){
+    const uid = currentUser.id;
+    const ops = [
+      supa.from("sales").upsert([saleToDb(sale,uid)]),
+      supa.from("cards").upsert(cards.map(c=>cardToDb(c,uid))),
+      supa.from("profiles").upsert({id:uid, cash_register:cashRegister, role:userRole},{onConflict:"id"}),
+    ];
+    if(session) ops.push(supa.from("brocante_sessions").upsert(sessionToDb(session,uid)));
+    Promise.all(ops).then(()=>setSyncStatus("synced","✓ Vente sauvegardée")).catch(e=>{ console.error(e); setSyncStatus("offline","⚠ Erreur sync"); });
+  }
 
   // Receipt
   document.getElementById("r-date").textContent=sale.date;
