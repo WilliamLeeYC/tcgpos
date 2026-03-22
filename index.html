@@ -1581,7 +1581,7 @@ const renderBrocante = wrap => {
   }
 };
 
-const startSession = () => {
+const startSession = async () => {
   const fraisInput = document.getElementById("session-frais-input");
   const fraisStand = fraisInput ? (parseFloat(fraisInput.value)||0) : 0;
   session = { id:genId(), startTs:Date.now(), startCash:cashRegister, salesIds:[], fraisStand };
@@ -1592,7 +1592,8 @@ const startSession = () => {
   // Insérer immédiatement dans Supabase
   if(isOnline && currentUser){
     const uid = currentUser.id;
-    supa.from("brocante_sessions").upsert(sessionToDb(session, uid)).then(()=>{});
+    const res = await supa.from("brocante_sessions").upsert(sessionToDb(session, uid));
+    console.log("startSession: Supabase insert result", res);
     if(fraisStand > 0) supa.from("treasury").upsert(treasury.map(t=>treasuryToDb(t,uid))).then(()=>{});
     supa.from("profiles").upsert({id:uid, cash_register:cashRegister, role:userRole},{onConflict:"id"}).then(()=>{});
   }
@@ -1610,11 +1611,19 @@ const cancelSession = async () => {
 
   // 1. Supprimer dans Supabase EN PREMIER
   if(isOnline && currentUser){
+    console.log("cancelSession: attempting to delete session", sessionId);
     const ops = [supa.from("brocante_sessions").delete().eq("id", sessionId)];
     if(sessionSaleIds.length>0) ops.push(supa.from("sales").delete().in("id", sessionSaleIds));
     const results = await Promise.all(ops);
+    console.log("cancelSession: delete results", results);
     const errResult = results.find(r=>r.error);
-    if(errResult){ setSyncStatus("offline","⚠ Erreur"); toast("Erreur Supabase","#EF4444"); return; }
+    if(errResult){
+      console.error("cancelSession error:", errResult.error);
+      setSyncStatus("offline","⚠ Erreur"); 
+      toast("Erreur : "+errResult.error.message,"#EF4444"); 
+      return; 
+    }
+    console.log("cancelSession: Supabase delete OK");
   }
 
   // 2. Remettre le stock localement
