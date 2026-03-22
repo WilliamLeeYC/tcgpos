@@ -822,7 +822,9 @@ const syncFromCloud = async () => {
       }, {onConflict:"id"});
     }
     const {data:sess} = await supa.from("brocante_sessions").select("*").eq("user_id",uid).eq("ended",false).order("start_ts",{ascending:false}).limit(1);
+    // Supabase fait autorité sur la session — toujours écraser le cache local
     session = sess&&sess[0] ? dbToSession(sess[0]) : null;
+    if(!session && currentUser) localStorage.removeItem(`pk4_session_${currentUser.id}`);
     persistLocal(); setSyncStatus("synced","✓ Synchronisé"); render();
   } catch(e) { setSyncStatus("offline","⚠ Erreur sync"); console.error(e); }
 };
@@ -1646,9 +1648,11 @@ const cancelSession = async () => {
   // 3. Supprimer les ventes et frais
   sales = sales.filter(s=>!sessionSaleIds.includes(s.id));
   treasury = treasury.filter(e=>!(e.type==="frais"&&e.fraisCat==="stand"&&Math.abs((e.ts||0)-sessionStart)<10000));
-  // 4. Remettre la caisse
+  // 4. Remettre la caisse — vider session du localStorage IMMÉDIATEMENT
   cashRegister = startCashSaved;
   session = null;
+  // Vider explicitement la clé session dans localStorage
+  if(currentUser) localStorage.removeItem(`pk4_session_${currentUser.id}`);
   persistLocal();
 
   // 5. Sync stock + caisse + treasury
@@ -1699,6 +1703,7 @@ const endSession = async () => {
 
   // Vider la session localement APRÈS confirmation Supabase
   session = null;
+  if(currentUser) localStorage.removeItem(`pk4_session_${currentUser.id}`);
   persistLocal();
   setSyncStatus("synced","✓ Session clôturée");
   render();
