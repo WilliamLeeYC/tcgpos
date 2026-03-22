@@ -1403,7 +1403,13 @@ const cancelSale = async (saleId, e) => {
   // 1. Supprimer dans Supabase EN PREMIER (avant toute modif locale)
   if(isOnline && currentUser){
     const {error} = await supa.from("sales").delete().eq("id", saleId);
-    if(error){ setSyncStatus("offline","⚠ Erreur"); toast("Erreur Supabase : "+error.message,"#EF4444"); return; }
+    if(error){
+      setSyncStatus("offline","⚠ Erreur");
+      toast("Erreur suppression : "+error.message,"#EF4444");
+      console.error("cancelSale Supabase error:", error);
+      return; // On n'annule pas localement si Supabase a échoué
+    }
+    console.log("cancelSale: sale deleted from Supabase OK", saleId);
   }
 
   // 2. Remettre le stock localement
