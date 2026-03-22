@@ -1956,7 +1956,23 @@ const openTreasuryModal = () => {
   document.getElementById("treasury-modal").classList.add("open");
 };
 
-const deleteTreasuryEntry = id => { treasury=treasury.filter(e=>e.id!==id); persist(); render(); };
+const deleteTreasuryEntry = async id => {
+  if(isOnline && currentUser){
+    const {error} = await supa.from("treasury").delete().eq("id", id);
+    if(error){ toast("Erreur suppression : "+error.message,"#EF4444"); return; }
+  }
+  treasury = treasury.filter(e=>e.id!==id);
+  persistLocal(); render();
+};
+
+const deletePartnerPayment = async id => {
+  if(isOnline && currentUser){
+    const {error} = await supa.from("partner_payments").delete().eq("id", id);
+    if(error){ toast("Erreur suppression : "+error.message,"#EF4444"); return; }
+  }
+  partnerPayments = partnerPayments.filter(p=>p.id!==id);
+  persistLocal(); render();
+};
 
 const openCashModal = () => {
   document.getElementById("cash-input").value = cashRegister || "";
@@ -1971,8 +1987,6 @@ const openPartnerPayModal = () => {
   window._ppayPartner = "fr";
   document.getElementById("partner-pay-modal").classList.add("open");
 };
-
-const deletePartnerPayment = id => { partnerPayments=partnerPayments.filter(p=>p.id!==id); persist(); render(); };
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
 let dashPeriod = "day";
