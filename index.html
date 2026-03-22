@@ -1392,31 +1392,40 @@ const renderHistory = wrap => {
 };
 
 // ── ANNULER UNE VENTE ────────────────────────────────────────────────────────
-const cancelSale = (saleId, e) => {
+const cancelSale = async (saleId, e) => {
   e && e.stopPropagation();
   const sale = sales.find(s=>s.id===saleId);
   if(!sale) return;
   if(!confirm(`Annuler cette vente de ${fmt(sale.total)}€ ?\n\nLe stock sera remis à jour et la caisse ajustée.`)) return;
 
-  // Remettre le stock
+  setSyncStatus("syncing","↑ Annulation…");
+
+  // 1. Supprimer dans Supabase EN PREMIER (avant toute modif locale)
+  if(isOnline && currentUser){
+    const {error} = await supa.from("sales").delete().eq("id", saleId);
+    if(error){ setSyncStatus("offline","⚠ Erreur"); toast("Erreur Supabase : "+error.message,"#EF4444"); return; }
+  }
+
+  // 2. Remettre le stock localement
   sale.items.forEach(item=>{
     const card = cards.find(c=>c.name===item.name);
     if(card) card.stock += item.qty;
   });
-  // Ajuster la caisse
+  // 3. Ajuster la caisse
   cashRegister = Math.max(0, cashRegister - sale.total);
+  // 4. Retirer la vente
   sales = sales.filter(s=>s.id!==saleId);
   persistLocal();
 
-  // Supabase
+  // 5. Sync stock + caisse vers Supabase
   if(isOnline && currentUser){
     const uid = currentUser.id;
-    Promise.all([
-      supa.from("sales").delete().eq("id", saleId),
+    await Promise.all([
       supa.from("cards").upsert(cards.map(c=>cardToDb(c,uid))),
       supa.from("profiles").upsert({id:uid, cash_register:cashRegister, role:userRole},{onConflict:"id"}),
-    ]).then(()=>setSyncStatus("synced","✓ Sauvegardé")).catch(e=>console.error(e));
+    ]);
   }
+  setSyncStatus("synced","✓ Sauvegardé");
   render();
   toast("Vente annulée — stock et caisse remis à jour ✓","#F59E0B");
 };
@@ -1584,45 +1593,54 @@ const startSession = () => {
   render(); toast("Session démarrée ! 🚀","#A78BFA");
 };
 
-const cancelSession = () => {
+const cancelSession = async () => {
   if(!session) return;
   const sessionSaleIds = session.salesIds||[];
-  const sessionSales = sales.filter(s=>sessionSaleIds.includes(s.id));
   const sessionId = session.id;
   const startCashSaved = session.startCash;
   const sessionStart = session.startTs;
 
-  // Remettre le stock
+  setSyncStatus("syncing","↑ Annulation session…");
+
+  // 1. Supprimer dans Supabase EN PREMIER
+  if(isOnline && currentUser){
+    const ops = [supa.from("brocante_sessions").delete().eq("id", sessionId)];
+    if(sessionSaleIds.length>0) ops.push(supa.from("sales").delete().in("id", sessionSaleIds));
+    const results = await Promise.all(ops);
+    const errResult = results.find(r=>r.error);
+    if(errResult){ setSyncStatus("offline","⚠ Erreur"); toast("Erreur Supabase","#EF4444"); return; }
+  }
+
+  // 2. Remettre le stock localement
+  const sessionSales = sales.filter(s=>sessionSaleIds.includes(s.id));
   sessionSales.forEach(sale=>{
     sale.items.forEach(item=>{
       const card = cards.find(c=>c.name===item.name);
       if(card) card.stock += item.qty;
     });
   });
-  // Supprimer les ventes
+  // 3. Supprimer les ventes et frais
   sales = sales.filter(s=>!sessionSaleIds.includes(s.id));
-  // Supprimer frais de stand liés à cette session
   treasury = treasury.filter(e=>!(e.type==="frais"&&e.fraisCat==="stand"&&Math.abs((e.ts||0)-sessionStart)<10000));
-  // Remettre la caisse au départ
+  // 4. Remettre la caisse
   cashRegister = startCashSaved;
   session = null;
   persistLocal();
 
-  // Supabase — tout supprimer proprement
+  // 5. Sync stock + caisse + treasury
   if(isOnline && currentUser){
     const uid = currentUser.id;
-    Promise.all([
-      supa.from("brocante_sessions").delete().eq("id", sessionId),
-      sessionSaleIds.length>0 ? supa.from("sales").delete().in("id", sessionSaleIds) : Promise.resolve(),
+    await Promise.all([
       supa.from("cards").upsert(cards.map(c=>cardToDb(c,uid))),
       supa.from("treasury").upsert(treasury.map(t=>treasuryToDb(t,uid))),
       supa.from("profiles").upsert({id:uid, cash_register:cashRegister, role:userRole},{onConflict:"id"}),
-    ]).then(()=>setSyncStatus("synced","✓ Sauvegardé")).catch(e=>{ console.error(e); setSyncStatus("offline","⚠ Erreur sync"); });
+    ]);
   }
+  setSyncStatus("synced","✓ Session annulée");
   render(); toast("Session annulée — stock et caisse remis à zéro ✓","#EF4444");
 };
 
-const endSession = () => {
+const endSession = async () => {
   if(!session) return;
   const sessionSales = sales.filter(s=>session.salesIds&&session.salesIds.includes(s.id));
   const revenu      = sessionSales.reduce((s,v)=>s+v.total,0);
@@ -1642,20 +1660,23 @@ const endSession = () => {
   treasury.unshift(bilanEntry);
   const sessionId = session.id;
 
-  // Mettre à jour la caisse et vider la session
+  // Mettre à jour la caisse
   cashRegister = startCash + revenu;
-  session = null;
-  persistLocal();
 
-  // Supabase — marquer la session comme terminée + sauver tout
+  // Supabase EN PREMIER — marquer ended avant de null session
   if(isOnline && currentUser){
     const uid = currentUser.id;
-    Promise.all([
+    await Promise.all([
       supa.from("brocante_sessions").update({ended:true}).eq("id", sessionId),
       supa.from("treasury").upsert([treasuryToDb(bilanEntry, uid)]),
       supa.from("profiles").upsert({id:uid, cash_register:cashRegister, role:userRole},{onConflict:"id"}),
-    ]).then(()=>setSyncStatus("synced","✓ Session clôturée")).catch(e=>console.error(e));
+    ]);
   }
+
+  // Vider la session localement APRÈS confirmation Supabase
+  session = null;
+  persistLocal();
+  setSyncStatus("synced","✓ Session clôturée");
   render();
 
   // Afficher le bilan
