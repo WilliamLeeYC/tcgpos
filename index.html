@@ -810,8 +810,17 @@ const syncFromCloud = async () => {
     if(sa.data) sales           = sa.data.map(dbToSale);
     if(tr.data) treasury        = tr.data.map(dbToTreasury);
     if(pp.data) partnerPayments = pp.data.map(dbToPartnerPay);
-    const {data:prof} = await supa.from("profiles").select("*").eq("id",uid).single();
-    if(prof){ cashRegister=prof.cash_register||0; userRole=prof.role||"owner"; }
+    const {data:prof} = await supa.from("profiles").select("*").eq("id",uid).maybeSingle();
+    if(prof){ 
+      cashRegister=prof.cash_register||0; 
+      userRole=prof.role||"owner"; 
+    } else {
+      // Profil manquant — le créer
+      await supa.from("profiles").upsert({
+        id:uid, display_name:currentUser.email?.split("@")[0]||"user",
+        role:"owner", cash_register:0
+      }, {onConflict:"id"});
+    }
     const {data:sess} = await supa.from("brocante_sessions").select("*").eq("user_id",uid).eq("ended",false).order("start_ts",{ascending:false}).limit(1);
     session = sess&&sess[0] ? dbToSession(sess[0]) : null;
     persistLocal(); setSyncStatus("synced","✓ Synchronisé"); render();
