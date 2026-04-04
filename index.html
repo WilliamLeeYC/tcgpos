@@ -2407,11 +2407,20 @@ const saveCard = () => {
   persist(); closeCardModal(); render();
 };
 
-const deleteCard = () => {
+const deleteCard = async () => {
   if(!editId) return;
-  cards = cards.filter(c => c.id !== editId);
-  cart  = cart.filter(i => i.id !== editId);
-  persist(); updateBadge(); closeCardModal(); toast("Supprimé","#EF4444"); render();
+  const idToDelete = editId;
+
+  // Supprimer dans Supabase EN PREMIER
+  if(isOnline && currentUser){
+    const {error} = await supa.from("cards").delete().eq("id", idToDelete);
+    if(error){ toast("Erreur suppression : "+error.message,"#EF4444"); return; }
+  }
+
+  cards = cards.filter(c => c.id !== idToDelete);
+  cart  = cart.filter(i => i.id !== idToDelete);
+  persistLocal(); updateBadge(); closeCardModal();
+  toast("Supprimé ✓","#EF4444"); render();
 };
 
 // ── PAYMENT ───────────────────────────────────────────────────────────────────
