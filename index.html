@@ -672,7 +672,6 @@ body { height: 100%; background: var(--bg); font-family: 'Space Grotesk', sans-s
 </div>
 
 <input type="file" id="import-file" accept=".json" style="display:none">
-<input type="file" id="import-catalogue-file" accept=".json" style="display:none">
 <div id="toast"></div>
 
 <script>
@@ -1766,7 +1765,7 @@ let tEntryType = "in";
 const renderTreasury = wrap => {
   wrap.style.paddingBottom = "20px";
 
-  // ── 0. EXPORT/IMPORT
+  // ── 0. EXPORT/IMPORT + RESET STOCK
   const backupBar=document.createElement("div"); backupBar.style.cssText="display:flex;gap:8px;margin-bottom:8px";
   const expBtn=document.createElement("button"); expBtn.style.cssText="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:10px;color:var(--text2);padding:9px 0;cursor:pointer;font-weight:700;font-size:12px;font-family:inherit";
   expBtn.textContent="📤 Exporter données"; expBtn.onclick=exportData;
@@ -1774,12 +1773,12 @@ const renderTreasury = wrap => {
   impBtn.textContent="📥 Importer données"; impBtn.onclick=()=>document.getElementById("import-file").click();
   backupBar.append(expBtn,impBtn); wrap.appendChild(backupBar);
 
-  // ── 0b. IMPORT CATALOGUE
-  const catBar=document.createElement("div"); catBar.style.cssText="margin-bottom:12px";
-  const catBtn=document.createElement("button"); catBtn.style.cssText="width:100%;background:linear-gradient(135deg,rgba(245,158,11,.12),rgba(239,68,68,.12));border:1px solid rgba(245,158,11,.4);border-radius:10px;color:#F59E0B;padding:10px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit";
-  catBtn.innerHTML="📋 Importer catalogue JSON <span style='font-size:10px;opacity:.7;font-weight:600;margin-left:4px'>— ajoute des produits sans écraser vos données</span>";
-  catBtn.onclick=()=>document.getElementById("import-catalogue-file").click();
-  catBar.appendChild(catBtn); wrap.appendChild(catBar);
+  // Bouton suppression stock
+  const clearStockBtn=document.createElement("button");
+  clearStockBtn.style.cssText="width:100%;background:transparent;border:1px solid rgba(239,68,68,.4);border-radius:10px;color:#EF4444;padding:9px 0;cursor:pointer;font-weight:700;font-size:12px;font-family:inherit;margin-bottom:14px";
+  clearStockBtn.textContent="🗑️ Supprimer tout le catalogue";
+  clearStockBtn.onclick = clearAllStock;
+  wrap.appendChild(clearStockBtn);
 
   // ── 1. CAISSE EN COURS
   const cashBar=document.createElement("div"); cashBar.className="cash-bar";
@@ -2524,6 +2523,42 @@ const confirmSale = () => {
 };
 
 // ── EXPORT / IMPORT ────────────────────────────────────────────────────────────
+const clearAllStock = async () => {
+  const count = cards.length;
+  if(count === 0){ toast("Le catalogue est déjà vide","#6B7280"); return; }
+
+  // Première confirmation
+  if(!confirm(`Supprimer tout le catalogue ?\n\n${count} article${count>1?"s":""} seront supprimés.\n\nCette action est irréversible.`)) return;
+
+  // Deuxième confirmation — tape le nombre pour confirmer
+  const input = prompt(`Deuxième confirmation requise.\nTape exactement "${count}" pour confirmer la suppression :`);
+  if(input === null) return; // annulé
+  if(input.trim() !== String(count)){
+    toast("Confirmation incorrecte — annulé","#F59E0B");
+    return;
+  }
+
+  setSyncStatus("syncing","↑ Suppression…");
+
+  // Supprimer dans Supabase EN PREMIER
+  if(isOnline && currentUser){
+    const {error} = await supa.from("cards").delete().eq("user_id", currentUser.id);
+    if(error){
+      setSyncStatus("offline","⚠ Erreur");
+      toast("Erreur Supabase : "+error.message,"#EF4444");
+      return;
+    }
+  }
+
+  cards = [];
+  cart  = [];
+  persistLocal();
+  updateBadge();
+  setSyncStatus("synced","✓ Catalogue supprimé");
+  toast(`${count} article${count>1?"s":""} supprimés ✓`,"#EF4444");
+  render();
+};
+
 const exportData = () => {
   const data = { version:2, exported:new Date().toISOString(), cards, sales, treasury, partnerPayments, cashRegister };
   const blob = new Blob([JSON.stringify(data,null,2)], {type:"application/json"});
@@ -2555,75 +2590,6 @@ const importData = (file) => {
   reader.readAsText(file);
 };
 
-// ── IMPORT CATALOGUE JSON ──────────────────────────────────────────────────────
-// Permet d'importer un fichier JSON de produits SANS écraser les ventes/trésorerie.
-// Formats acceptés :
-//   - Tableau direct  : [ { name, cat, price, ... }, ... ]
-//   - Objet avec clé  : { "cards": [ ... ] }
-//   - Export TCGPOS   : { "version": 2, "cards": [...], ... }  → seuls les cards sont importés
-const importCatalogue = async (file) => {
-  if(!file) return;
-  let raw;
-  try { raw = JSON.parse(await file.text()); }
-  catch { toast("❌ Fichier JSON invalide","#EF4444"); return; }
-
-  // Résoudre le tableau de produits
-  const items = Array.isArray(raw) ? raw
-              : Array.isArray(raw.cards) ? raw.cards
-              : null;
-  if(!items || items.length === 0) { toast("❌ Aucun produit trouvé dans le fichier","#EF4444"); return; }
-
-  const VALID_CATS  = ["carte","scelle","accessoire","classeur","autre"];
-  const VALID_GAMES = ["pokemon","onepiece","riftbound","autre"];
-  const VALID_CONDS = ["NM","EX","GD","LP","PL","PO"];
-  const VALID_LANGS = ["FR","EN","JP","CN",""];
-  const VALID_PARTS = ["none","fr","cn"];
-
-  let added = 0, skipped = 0, dupes = 0;
-
-  for(const item of items){
-    if(!item.name || typeof item.name !== "string"){ skipped++; continue; }
-
-    // Si l'item a un id qui existe déjà → on skip (évite les doublons)
-    if(item.id && cards.find(c => c.id === item.id)){ dupes++; continue; }
-
-    const card = {
-      id:            item.id || genId(),
-      name:          String(item.name).trim(),
-      cat:           VALID_CATS.includes(item.cat)        ? item.cat        : "carte",
-      game:          VALID_GAMES.includes(item.game)      ? item.game       : "pokemon",
-      condition:     VALID_CONDS.includes(item.condition) ? item.condition  : "NM",
-      number:        item.number        ? String(item.number)  : null,
-      lang:          VALID_LANGS.includes(item.lang)      ? item.lang       : "",
-      sealedType:    item.sealedType    || item.sealed_type    || null,
-      accType:       item.accType       || item.acc_type       || null,
-      classeurPerso: item.classeurPerso || item.classeur_perso || null,
-      price:         parseFloat(item.price) || 0,
-      cost:          parseFloat(item.cost)  || 0,
-      stock:         parseInt(item.stock)   || 0,
-      partner:       VALID_PARTS.includes(item.partner)   ? item.partner    : "none",
-      shared:        !!(item.shared || (item.partner && item.partner !== "none")),
-      photo:         item.photo || null,
-    };
-
-    cards.push(card);
-
-    // Sync Supabase si connecté
-    if(isOnline && currentUser){
-      try { await supa.from("cards").upsert(cardToDb(card, currentUser.id)); }
-      catch(err) { console.warn("Supabase upsert error:", card.name, err); }
-    }
-    added++;
-  }
-
-  persistLocal();
-  render();
-
-  if(added > 0)  toast(`✅ ${added} produit${added>1?"s":""} importé${added>1?"s":""}`, "#10B981");
-  if(dupes > 0)  toast(`ℹ️ ${dupes} doublon${dupes>1?"s":""} ignoré${dupes>1?"s":""}`, "#60A5FA");
-  if(skipped > 0) toast(`⚠️ ${skipped} ligne${skipped>1?"s":""} ignorée${skipped>1?"s":""} (nom manquant)`, "#F59E0B");
-};
-
 // ── EVENTS ────────────────────────────────────────────────────────────────────
 // Theme toggle
 let darkMode = ld("tcg_dark", true);
@@ -2650,7 +2616,6 @@ document.getElementById("card-delete").onclick=deleteCard;
 document.getElementById("card-modal").onclick=e=>{ if(e.target===e.currentTarget) closeCardModal(); };
 
 document.getElementById("import-file").onchange = e => { importData(e.target.files[0]); e.target.value=""; };
-document.getElementById("import-catalogue-file").onchange = e => { importCatalogue(e.target.files[0]); e.target.value=""; };
 
 // Autocomplete events
 document.getElementById("f-search-card").oninput = e => {
