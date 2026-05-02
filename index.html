@@ -1088,7 +1088,18 @@ const buildCardRow = (card, mode) => {
     const ctrl=document.createElement("div"); ctrl.className="qty-controls";
     const qn=document.createElement("span"); qn.className="qty-num";
     qn.textContent=card.stock; qn.style.color=card.stock===0?"#EF4444":card.stock<=3?"#F59E0B":"#10B981";
-    ctrl.appendChild(mkSm("−",e=>{ e.stopPropagation(); card.stock=Math.max(0,card.stock-1); persist(); render(); }));
+    const minusBtn = mkSm("−", async e => {
+      e.stopPropagation();
+      if(card.stock === 1){
+        // Première confirmation
+        if(!confirm(`Mettre "${card.name}" à 0 en stock ?\n\nL'article sera épuisé et masqué du catalogue de vente.`)) return;
+        // Deuxième confirmation
+        if(!confirm(`Confirmer ? L'article passera à 0 en stock.`)) return;
+      }
+      card.stock = Math.max(0, card.stock - 1);
+      persist(); render();
+    });
+    ctrl.appendChild(minusBtn);
     ctrl.appendChild(qn);
     ctrl.appendChild(mkSm("+",e=>{ e.stopPropagation(); card.stock++; persist(); render(); }));
     row.append(em,info,pw,ctrl);
@@ -1236,16 +1247,30 @@ const renderCart = wrap => {
     if(item.photo){ const img=document.createElement("img"); img.src=item.photo; img.alt=item.name; img.style.cssText="width:44px;height:44px;border-radius:8px;object-fit:cover;border:1px solid #334155"; em.appendChild(img); }
     else { em.style.cssText+="font-size:24px"; em.textContent=CAT_ICONS[item.cat||"carte"]||"🃏"; }
 
-    const discountedUnitPrice = item.price * (1 - cartDiscount/100);
+    // Prix effectif par unité — tient compte du prix libre si actif
+    const baseTotal = cartTotalBase();
+    let discountedUnitPrice;
+    if(cartManualTotal !== null && baseTotal > 0){
+      const share = (item.price * item.qty) / baseTotal;
+      discountedUnitPrice = Math.round((cartManualTotal * share / item.qty) * 100) / 100;
+    } else {
+      discountedUnitPrice = item.price * (1 - cartDiscount/100);
+    }
     const lineTotal = discountedUnitPrice * item.qty;
     const belowMargin = item.cost>0 && discountedUnitPrice < minPriceFor(item);
+
+    // Affichage marge par ligne
+    const margin = (discountedUnitPrice - (item.cost||0)) * item.qty;
+    const marginPct = item.cost>0 ? ((discountedUnitPrice - item.cost)/item.cost*100).toFixed(0) : null;
 
     const info=document.createElement("div"); info.style.cssText="flex:1;min-width:0";
     info.innerHTML=`
       <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</div>
       <div style="font-size:12px;font-weight:600;color:${belowMargin?"#F87171":"#10B981"}">
-        ${cartDiscount>0?`<span style="text-decoration:line-through;color:#6B7280;font-size:11px">${fmt(item.price)}€</span> `:""}${fmt(discountedUnitPrice)}€ × ${item.qty} = <strong>${fmt(lineTotal)}€</strong>
-      </div>`;
+        ${(cartDiscount>0||cartManualTotal!==null)?`<span style="text-decoration:line-through;color:#6B7280;font-size:11px">${fmt(item.price)}€</span> `:""}${fmt(discountedUnitPrice)}€ × ${item.qty} = <strong>${fmt(lineTotal)}€</strong>
+      </div>
+      ${item.cost>0?`<div style="font-size:10px;color:${belowMargin?"#F87171":"#6B7280"}">marge ${fmt(margin)}€${marginPct!==null?" ("+marginPct+"%)" : ""}</div>`:""}
+    `;
     const ctrl=document.createElement("div"); ctrl.className="qty-controls";
     ctrl.appendChild(mkSm("−",()=>changeQty(item.id,-1)));
     const qn=document.createElement("span"); qn.className="qty-num"; qn.style.color="#F9FAFB"; qn.textContent=item.qty; ctrl.appendChild(qn);
@@ -1386,6 +1411,10 @@ const renderHistory = wrap => {
       if(item.qty>1){ const q=document.createElement("span"); q.style.cssText="font-size:10px;color:#9CA3AF"; q.textContent=`×${item.qty}`; metaLine.appendChild(q); }
       if(catalogCard?.number){ const n=document.createElement("span"); n.style.cssText="font-size:10px;color:#6B7280"; n.textContent=`#${catalogCard.number}`; metaLine.appendChild(n); }
       if(catalogCard?.condition){ const ce=document.createElement("span"); ce.className=`pill cond-${catalogCard.condition}`; ce.style.cssText=`font-size:9px;padding:1px 5px;background:${CONDITION_COLOR[catalogCard.condition]||"#6B7280"}22;border:1px solid ${CONDITION_COLOR[catalogCard.condition]||"#6B7280"}55`; ce.textContent=catalogCard.condition; metaLine.appendChild(ce); }
+      // Badge associé — depuis l'item ou depuis le catalogue
+      const itemPartner = item.partner || (item.shared ? "fr" : null) || catalogCard?.partner || null;
+      if(itemPartner === "fr"){ const pb=document.createElement("span"); pb.className="shared-badge"; pb.textContent="🤝 FR"; metaLine.appendChild(pb); }
+      else if(itemPartner === "cn"){ const pb=document.createElement("span"); pb.className="shared-badge"; pb.style.cssText="background:rgba(96,165,250,.15);color:#60A5FA;border:1px solid rgba(96,165,250,.4)"; pb.textContent="🇨🇳 CN"; metaLine.appendChild(pb); }
       iinfo.append(nameLine,metaLine);
       const iright=document.createElement("div"); iright.style.cssText="text-align:right;flex-shrink:0";
       iright.innerHTML=`<div style="font-weight:700;font-size:12px;color:#10B981">${fmt(item.price*item.qty)}€</div>
@@ -2478,11 +2507,26 @@ const closePay = () => {
 const confirmSale = () => {
   const total=cartTotal(), paid=parseFloat(document.getElementById("pay-input").value);
   if(paid<total) return;
-  const saleItems = cart.map(i=>({
-    name:i.name, qty:i.qty,
-    price:i.price*(1-cartDiscount/100), originalPrice:i.price,
-    cost:i.cost||0, shared:i.shared||false, partner:i.partner||"none"
-  }));
+
+  // Calcul du prix effectif par article
+  // Si prix libre : répartition proportionnelle au prix catalogue
+  // Si remise % : prix * (1 - remise)
+  const base = cartTotalBase(); // somme des prix catalogue × qty
+  const saleItems = cart.map(i=>{
+    let effectiveUnitPrice;
+    if(cartManualTotal !== null && base > 0){
+      // Répartition proportionnelle : part de cet article dans le total catalogue
+      const share = (i.price * i.qty) / base;
+      effectiveUnitPrice = Math.round((cartManualTotal * share / i.qty) * 100) / 100;
+    } else {
+      effectiveUnitPrice = Math.round(i.price * (1 - cartDiscount/100) * 100) / 100;
+    }
+    return {
+      name:i.name, qty:i.qty,
+      price:effectiveUnitPrice, originalPrice:i.price,
+      cost:i.cost||0, shared:i.shared||false, partner:i.partner||"none"
+    };
+  });
   const sale={ id:genId(), date:new Date().toLocaleString("fr-CA"), ts:Date.now(),
     items:saleItems, total, paid, change:paid-total, discount:cartDiscount };
   sales.unshift(sale);
