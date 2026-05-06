@@ -360,7 +360,7 @@ body { height: 100%; background: var(--bg); font-family: 'Space Grotesk', sans-s
       </div>
     </div>
     <div id="search-wrap">
-      <input id="search" type="text" placeholder="Rechercher par nom ou numéro…" autocomplete="off">
+      <input id="search" type="text" placeholder="Rechercher par nom ou S/N…" autocomplete="off">
     </div>
   </div>
 
@@ -374,6 +374,7 @@ body { height: 100%; background: var(--bg); font-family: 'Space Grotesk', sans-s
       <button class="nav-btn" data-tab="brocante"><span class="nav-icon">🏪</span><span class="nav-label">Brocante</span><span class="nav-badge" id="session-badge" style="background:#A78BFA;display:none">!</span></button>
       <button class="nav-btn" data-tab="treasury"><span class="nav-icon">💰</span><span class="nav-label">Balance</span></button>
       <button class="nav-btn" data-tab="dash"><span class="nav-icon">📊</span><span class="nav-label">Stats</span></button>
+      <button class="nav-btn" data-tab="settings"><span class="nav-icon">⚙️</span><span class="nav-label">Réglages</span></button>
     </div>
   </div>
 </div>
@@ -421,7 +422,7 @@ body { height: 100%; background: var(--bg); font-family: 'Space Grotesk', sans-s
         </div>
       </div>
       <div class="field-row">
-        <div class="field"><div class="field-label">Numéro</div><input id="f-number" type="text" placeholder="Ex: 101/123"></div>
+        <div class="field"><div class="field-label">S/N</div><input id="f-number" type="text" placeholder="Ex: TCG-2024-00042"></div>
         <div class="field"><div class="field-label">État</div>
           <select id="f-condition">
             <option value="NM">NM — Near Mint</option>
@@ -1024,7 +1025,7 @@ const render = () => {
   // Hide management tabs for vendor
   document.querySelectorAll(".nav-btn").forEach(b => {
     const t = b.dataset.tab;
-    if(userRole==="vendor" && ["brocante","treasury","dash"].includes(t)){
+    if(userRole==="vendor" && ["brocante","treasury","dash","settings"].includes(t)){
       b.style.display = "none";
     } else {
       b.style.display = "";
@@ -1036,6 +1037,7 @@ const render = () => {
   else if(tab==="brocante") renderBrocante(wrap);
   else if(tab==="treasury") renderTreasury(wrap);
   else if(tab==="dash") renderDash(wrap);
+  else if(tab==="settings") renderSettings(wrap);
 };
 
 // ── CATALOGUE UNIFIÉ (vente + gestion stock) ──────────────────────────────────
@@ -1062,7 +1064,7 @@ const buildCardRow = (card, mode) => {
   if(cat==="carte"){
     mt.appendChild(Object.assign(document.createElement("span"),{className:"card-num",textContent:`${GAME_ICONS[card.game||"pokemon"]} ${GAME_NAMES[card.game||"pokemon"]||""}`}));
     if(card.condition){ const ce=document.createElement("span"); ce.className=`pill cond-${card.condition}`; ce.style.cssText=`background:${CONDITION_COLOR[card.condition]||"#6B7280"}22;border:1px solid ${CONDITION_COLOR[card.condition]||"#6B7280"}55`; ce.textContent=card.condition; mt.appendChild(ce); }
-    if(card.number){ mt.appendChild(Object.assign(document.createElement("span"),{className:"card-num",textContent:`#${card.number}`})); }
+    if(card.number){ mt.appendChild(Object.assign(document.createElement("span"),{className:"card-num",textContent:`S/N: ${card.number}`})); }
   } else if(cat==="scelle"){ mt.appendChild(Object.assign(document.createElement("span"),{className:"card-num",textContent:SEALED_NAMES[card.sealedType]||""})); }
   else if(cat==="accessoire"){ mt.appendChild(Object.assign(document.createElement("span"),{className:"card-num",textContent:ACC_NAMES[card.accType]||""})); }
   else if(cat==="classeur"){ mt.appendChild(Object.assign(document.createElement("span"),{className:"card-num",textContent:card.classeurPerso||"Classeur perso"})); }
@@ -1409,7 +1411,7 @@ const renderHistory = wrap => {
       const nameLine=document.createElement("div"); nameLine.style.cssText="font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"; nameLine.textContent=item.name;
       const metaLine=document.createElement("div"); metaLine.style.cssText="display:flex;gap:5px;margin-top:2px;flex-wrap:wrap;align-items:center";
       if(item.qty>1){ const q=document.createElement("span"); q.style.cssText="font-size:10px;color:#9CA3AF"; q.textContent=`×${item.qty}`; metaLine.appendChild(q); }
-      if(catalogCard?.number){ const n=document.createElement("span"); n.style.cssText="font-size:10px;color:#6B7280"; n.textContent=`#${catalogCard.number}`; metaLine.appendChild(n); }
+      if(catalogCard?.number){ const n=document.createElement("span"); n.style.cssText="font-size:10px;color:#6B7280"; n.textContent=`S/N: ${catalogCard.number}`; metaLine.appendChild(n); }
       if(catalogCard?.condition){ const ce=document.createElement("span"); ce.className=`pill cond-${catalogCard.condition}`; ce.style.cssText=`font-size:9px;padding:1px 5px;background:${CONDITION_COLOR[catalogCard.condition]||"#6B7280"}22;border:1px solid ${CONDITION_COLOR[catalogCard.condition]||"#6B7280"}55`; ce.textContent=catalogCard.condition; metaLine.appendChild(ce); }
       // Badge associé — depuis l'item ou depuis le catalogue
       const itemPartner = item.partner || (item.shared ? "fr" : null) || catalogCard?.partner || null;
@@ -1788,26 +1790,53 @@ const endSession = async () => {
   };
 };
 
+// ── RÉGLAGES ──────────────────────────────────────────────────────────────────
+const renderSettings = wrap => {
+  wrap.style.paddingBottom = "20px";
+  const title = document.createElement("div"); title.className="section-title"; title.textContent="⚙️ Réglages"; wrap.appendChild(title);
+
+  // ── Sauvegarde & Import
+  const section = (label) => {
+    const s=document.createElement("div"); s.style.cssText="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px"; s.textContent=label; wrap.appendChild(s);
+  };
+
+  section("📦 Données");
+  const backupBar=document.createElement("div"); backupBar.style.cssText="display:flex;gap:8px;margin-bottom:8px";
+  const expBtn=document.createElement("button"); expBtn.style.cssText="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:12px;color:var(--text2);padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit";
+  expBtn.innerHTML="📤<br><span style='font-size:10px'>Exporter données</span>"; expBtn.onclick=exportData;
+  const impBtn=document.createElement("button"); impBtn.style.cssText="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:12px;color:var(--text2);padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit";
+  impBtn.innerHTML="📥<br><span style='font-size:10px'>Importer données</span>"; impBtn.onclick=()=>document.getElementById("import-file").click();
+  backupBar.append(expBtn,impBtn); wrap.appendChild(backupBar);
+
+  const infoBox=document.createElement("div"); infoBox.style.cssText="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:8px";
+  infoBox.innerHTML="💡 <strong>Export</strong> = sauvegarde complète (.json) de toutes tes données.<br>💡 <strong>Import</strong> = restaure ou charge un nouveau catalogue depuis un fichier .json.";
+  wrap.appendChild(infoBox);
+
+  section("🗑️ Danger zone");
+  const clearStockBtn=document.createElement("button");
+  clearStockBtn.style.cssText="width:100%;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.4);border-radius:12px;color:#EF4444;padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;margin-bottom:8px";
+  clearStockBtn.textContent="🗑️ Supprimer tout le catalogue";
+  clearStockBtn.onclick = clearAllStock;
+  wrap.appendChild(clearStockBtn);
+
+  const warnBox=document.createElement("div"); warnBox.style.cssText="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2);border-radius:12px;padding:12px 14px;font-size:11px;color:#FCA5A5;line-height:1.5";
+  warnBox.innerHTML="⚠️ La suppression du catalogue est <strong>irréversible</strong>. Fais un export avant de procéder.";
+  wrap.appendChild(warnBox);
+
+  section("👤 Compte");
+  const userBox=document.createElement("div"); userBox.style.cssText="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center";
+  const userInfo=document.createElement("div");
+  userInfo.innerHTML=`<div style="font-size:13px;font-weight:600">${currentUser?.email||"—"}</div><div style="font-size:11px;color:var(--text3);margin-top:2px">Rôle : ${userRole==="owner"?"Propriétaire":"Vendeur"}</div>`;
+  const logoutBtn=document.createElement("button"); logoutBtn.style.cssText="background:var(--bg4);border:1px solid var(--border2);border-radius:9px;color:var(--text2);padding:8px 12px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit";
+  logoutBtn.textContent="🚪 Déconnexion"; logoutBtn.onclick=()=>document.getElementById("logout-btn").click();
+  userBox.append(userInfo,logoutBtn); wrap.appendChild(userBox);
+};
+
 // ── TRÉSORERIE ────────────────────────────────────────────────────────────────
 let tEntryType = "in";
 
 const renderTreasury = wrap => {
   wrap.style.paddingBottom = "20px";
-
-  // ── 0. EXPORT/IMPORT + RESET STOCK
-  const backupBar=document.createElement("div"); backupBar.style.cssText="display:flex;gap:8px;margin-bottom:8px";
-  const expBtn=document.createElement("button"); expBtn.style.cssText="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:10px;color:var(--text2);padding:9px 0;cursor:pointer;font-weight:700;font-size:12px;font-family:inherit";
-  expBtn.textContent="📤 Exporter données"; expBtn.onclick=exportData;
-  const impBtn=document.createElement("button"); impBtn.style.cssText="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:10px;color:var(--text2);padding:9px 0;cursor:pointer;font-weight:700;font-size:12px;font-family:inherit";
-  impBtn.textContent="📥 Importer données"; impBtn.onclick=()=>document.getElementById("import-file").click();
-  backupBar.append(expBtn,impBtn); wrap.appendChild(backupBar);
-
-  // Bouton suppression stock
-  const clearStockBtn=document.createElement("button");
-  clearStockBtn.style.cssText="width:100%;background:transparent;border:1px solid rgba(239,68,68,.4);border-radius:10px;color:#EF4444;padding:9px 0;cursor:pointer;font-weight:700;font-size:12px;font-family:inherit;margin-bottom:14px";
-  clearStockBtn.textContent="🗑️ Supprimer tout le catalogue";
-  clearStockBtn.onclick = clearAllStock;
-  wrap.appendChild(clearStockBtn);
 
   // ── 1. CAISSE EN COURS
   const cashBar=document.createElement("div"); cashBar.className="cash-bar";
