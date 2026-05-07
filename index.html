@@ -2642,22 +2642,58 @@ const exportData = () => {
   toast("Export téléchargé ✓","#10B981");
 };
 
-const importData = (file) => {
+const importData = async (file) => {
   if(!file) return;
   const reader = new FileReader();
-  reader.onload = e => {
+  reader.onload = async e => {
     try {
       const data = JSON.parse(e.target.result);
       if(!data.version) throw new Error("Format invalide");
-      if(data.cards)          cards           = data.cards;
-      if(data.sales)          sales           = data.sales;
-      if(data.treasury)       treasury        = data.treasury;
-      if(data.partnerPayments)partnerPayments = data.partnerPayments;
-      if(data.cashRegister!=null) cashRegister = data.cashRegister;
-      persist(); render();
-      toast(`Import réussi — ${cards.length} produits, ${sales.length} ventes ✓`,"#10B981");
+
+      // ── MODE FUSION : on n'écrase JAMAIS ventes, tréso, caisse, session
+      // On fusionne uniquement les cartes en évitant les doublons
+
+      if(data.cards && data.cards.length > 0){
+        let added = 0, skipped = 0;
+
+        // Index des cartes existantes par S/N et par nom+état
+        const existingBySN   = new Map(cards.filter(c=>c.number).map(c=>[c.number.trim().toLowerCase(), c]));
+        const existingByName = new Map(cards.map(c=>[`${c.name.trim().toLowerCase()}|${c.condition||""}|${c.lang||""}`, c]));
+
+        const newCards = [];
+        for(const card of data.cards){
+          const sn        = card.number ? card.number.trim().toLowerCase() : null;
+          const nameKey   = `${card.name.trim().toLowerCase()}|${card.condition||""}|${card.lang||""}`;
+
+          // Doublon par S/N (prioritaire)
+          if(sn && existingBySN.has(sn)){ skipped++; continue; }
+          // Doublon par nom+état+langue (si pas de S/N)
+          if(!sn && existingByName.has(nameKey)){ skipped++; continue; }
+
+          newCards.push(card);
+          if(sn) existingBySN.set(sn, card);
+          existingByName.set(nameKey, card);
+          added++;
+        }
+
+        cards = [...cards, ...newCards];
+
+        // Sync Supabase — uniquement les nouvelles cartes
+        if(isOnline && currentUser && newCards.length > 0){
+          const uid = currentUser.id;
+          setSyncStatus("syncing","↑ Sync nouvelles cartes…");
+          await supa.from("cards").upsert(newCards.map(c=>cardToDb(c,uid)));
+          setSyncStatus("synced","✓ Sauvegardé");
+        }
+
+        persistLocal(); render();
+        toast(`${added} carte${added>1?"s":""} ajoutée${added>1?"s":""} · ${skipped} doublon${skipped>1?"s":""} ignoré${skipped>1?"s":""}`, "#10B981");
+      } else {
+        toast("Aucune carte à importer","#F59E0B");
+      }
     } catch(err) {
-      toast("Erreur : fichier invalide","#EF4444");
+      console.error(err);
+      toast("Erreur : "+err.message,"#EF4444");
     }
   };
   reader.readAsText(file);
