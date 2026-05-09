@@ -1552,16 +1552,73 @@ const renderBrocante = wrap => {
     fraisRow.append(fraisLabel,fraisInput); hero.appendChild(fraisRow);
     wrap.appendChild(hero);
 
-    // Historique des dernières sessions si disponible
-    const pastSessions = treasury.filter(e=>e.type==="session_bilan");
+    // Historique complet des sessions — jamais supprimé
+    const pastSessions = [...treasury.filter(e=>e.type==="session_bilan")].sort((a,b)=>b.ts-a.ts);
     if(pastSessions.length>0){
-      const ph=document.createElement("div"); ph.style.cssText="font-weight:700;font-size:14px;margin:14px 0 8px"; ph.textContent="Sessions précédentes";
+      const ph=document.createElement("div"); ph.style.cssText="font-weight:700;font-size:14px;margin:14px 0 8px"; ph.textContent=`Sessions précédentes (${pastSessions.length})`;
       wrap.appendChild(ph);
-      pastSessions.slice(0,5).forEach(s=>{
-        const row=document.createElement("div"); row.className="treasury-entry-row";
-        row.innerHTML=`<div style="flex:1"><div style="font-weight:600;font-size:13px">${s.desc}</div><div style="font-size:10px;color:var(--text3)">${s.date}</div></div>
-          <div style="font-weight:800;color:#10B981;font-size:14px">+${fmt(s.amount)}€</div>`;
-        wrap.appendChild(row);
+      pastSessions.forEach(s=>{
+        const m = s.meta || {};
+        const card=document.createElement("div");
+        card.style.cssText="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer";
+        // Header
+        const hdr=document.createElement("div"); hdr.style.cssText="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px";
+        hdr.innerHTML=`
+          <div>
+            <div style="font-weight:700;font-size:13px">${s.date}</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">${m.durStr||""} · ${m.nbVentes||s.desc.match(/(\d+) ventes/)?.[1]||"?"} ventes · ${m.qty||"?"} articles</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-weight:800;font-size:16px;color:#10B981">+${fmt(s.amount)}€</div>
+            ${m.margeNette!=null?`<div style="font-size:11px;color:#60A5FA">bénéf net: ${fmt(m.margeNette)}€</div>`:""}
+          </div>`;
+        card.appendChild(hdr);
+        // Stats grid si meta disponible
+        if(m.revenu!=null){
+          const grid=document.createElement("div"); grid.style.cssText="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px";
+          [{lbl:"CA",val:`${fmt(m.revenu)}€`,col:"#10B981"},
+           {lbl:"Marge brute",val:`${fmt(m.marge||0)}€`,col:"#60A5FA"},
+           {lbl:"Caisse finale",val:`${fmt(m.cashFinale||0)}€`,col:"#F59E0B"}].forEach(c=>{
+            grid.innerHTML+=`<div style="background:var(--bg3);border-radius:9px;padding:8px;text-align:center">
+              <div style="font-size:14px;font-weight:800;color:${c.col}">${c.val}</div>
+              <div style="font-size:10px;color:var(--text3)">${c.lbl}</div></div>`;
+          });
+          card.appendChild(grid);
+          // Déductions
+          if((m.fraisStand||0)>0||(m.partnerDue||0)>0){
+            const ded=document.createElement("div"); ded.style.cssText="font-size:11px;color:var(--text3);margin-bottom:8px;display:flex;gap:10px";
+            if((m.fraisStand||0)>0) ded.innerHTML+=`<span>🏪 Frais stand: -${fmt(m.fraisStand)}€</span>`;
+            if((m.partnerDue||0)>0) ded.innerHTML+=`<span>🤝 Associé: -${fmt(m.partnerDue)}€</span>`;
+            card.appendChild(ded);
+          }
+          // Détail ventes (collapsed par défaut)
+          if(m.ventes && m.ventes.length>0){
+            const toggle=document.createElement("button");
+            toggle.style.cssText="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:9px;color:var(--text2);padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit";
+            toggle.textContent=`▼ Voir le détail des ventes (${m.ventes.length})`;
+            const detail=document.createElement("div"); detail.style.display="none"; detail.style.marginTop="8px";
+            m.ventes.forEach(v=>{
+              const vrow=document.createElement("div"); vrow.style.cssText="display:flex;justify-content:space-between;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px";
+              vrow.innerHTML=`<div style="flex:1"><div style="color:var(--text3);font-size:10px">${v.date}</div>
+                <div>${v.items.map(i=>`${i.name} ×${i.qty}`).join(", ")}</div></div>
+                <div style="font-weight:700;color:#10B981;margin-left:8px;white-space:nowrap">${fmt(v.total)}€</div>`;
+              detail.appendChild(vrow);
+            });
+            toggle.onclick=()=>{
+              const open=detail.style.display!=="none";
+              detail.style.display=open?"none":"block";
+              toggle.textContent=(open?`▼`:`▲`)+` ${open?"Voir":"Masquer"} le détail des ventes (${m.ventes.length})`;
+            };
+            card.appendChild(toggle); card.appendChild(detail);
+          }
+          // Bouton export txt
+          const expBtn=document.createElement("button");
+          expBtn.style.cssText="width:100%;background:transparent;border:1px solid var(--border2);border-radius:9px;color:var(--text2);padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;margin-top:8px";
+          expBtn.textContent="📄 Exporter ce bilan (.txt)";
+          expBtn.onclick=()=>exportBilanTxt(s);
+          card.appendChild(expBtn);
+        }
+        wrap.appendChild(card);
       });
     }
     return;
@@ -1621,6 +1678,37 @@ const renderBrocante = wrap => {
   } else {
     wrap.appendChild(mkEmpty("🛒","Aucune vente encore","Encaisse ta première vente pour la voir ici"));
   }
+};
+
+const exportBilanTxt = (s) => {
+  const m = s.meta || {};
+  const lines = [
+    `=== BILAN SESSION TCGPOS ===`,
+    `Date: ${s.date}`,
+    `Durée: ${m.durStr||"—"}`,
+    ``,
+    `CA encaissé:        ${fmt(m.revenu||s.amount)} €`,
+    `Marge brute:        ${fmt(m.marge||0)} €`,
+    `Articles vendus:    ${m.qty||"—"}`,
+    `Transactions:       ${m.nbVentes||"—"}`,
+    ...(m.fraisStand>0 ? [`Frais de stand:     −${fmt(m.fraisStand)} €`] : []),
+    ...(m.partnerDue>0 ? [`Dû aux associés:    −${fmt(m.partnerDue)} €`] : []),
+    `Mon bénéfice net:   ${m.margeNette!=null?(m.margeNette>=0?"+":"")+fmt(m.margeNette)+" €":"—"}`,
+    ``,
+    `Caisse départ:      ${fmt(m.startCash||0)} €`,
+    `Caisse finale:      ${fmt(m.cashFinale||0)} €`,
+  ];
+  if(m.ventes && m.ventes.length>0){
+    lines.push(``, `=== DÉTAIL DES VENTES ===`);
+    m.ventes.forEach(v=>{
+      lines.push(`  ${v.date} — Total: ${fmt(v.total)}€`);
+      v.items.forEach(i=>lines.push(`    · ${i.name} ×${i.qty} — ${fmt(i.price*i.qty)}€`));
+    });
+  }
+  const blob=new Blob([lines.join("\n")],{type:"text/plain;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download=`bilan-brocante-${new Date(s.ts).toISOString().slice(0,10)}.txt`; a.click();
+  toast("Bilan exporté ✓","#A78BFA");
 };
 
 const startSession = async () => {
@@ -1713,9 +1801,22 @@ const endSession = async () => {
   const startDate   = new Date(session.startTs).toLocaleString("fr-CA");
   const durStr      = dur<60 ? `${dur} min` : `${Math.floor(dur/60)}h${String(dur%60).padStart(2,"0")}`;
 
-  // Sauvegarder le bilan dans treasury AVANT de vider la session
-  const bilanEntry = {id:genId(), date:new Date().toLocaleString("fr-CA"), ts:Date.now(), type:"session_bilan",
-    desc:`Session brocante · ${sessionSales.length} ventes · ${durStr}`, amount:revenu};
+  // Sauvegarder le bilan complet dans treasury
+  const bilanEntry = {
+    id:genId(), date:new Date().toLocaleString("fr-CA"), ts:Date.now(),
+    type:"session_bilan",
+    desc:`Session brocante · ${sessionSales.length} ventes · ${durStr}`,
+    amount:revenu,
+    // Données complètes pour affichage individuel
+    meta: {
+      revenu, marge, margeNette, qty, nbVentes:sessionSales.length,
+      fraisStand, partnerDue, startCash, cashFinale:startCash+revenu,
+      durStr, startDate, ventes: sessionSales.map(s=>({
+        date:s.date, total:s.total,
+        items:s.items.map(i=>({name:i.name, qty:i.qty, price:i.price, cost:i.cost||0, partner:i.partner||"none"}))
+      }))
+    }
+  };
   treasury.unshift(bilanEntry);
   const sessionId = session.id;
 
@@ -2022,6 +2123,12 @@ const openTreasuryModal = () => {
 };
 
 const deleteTreasuryEntry = async id => {
+  const entry = treasury.find(e=>e.id===id);
+  if(!entry) return;
+  if(entry.type==="session_bilan"){
+    toast("Les bilans de session ne peuvent pas être supprimés","#F59E0B");
+    return;
+  }
   if(isOnline && currentUser){
     const {error} = await supa.from("treasury").delete().eq("id", id);
     if(error){ toast("Erreur suppression : "+error.message,"#EF4444"); return; }
