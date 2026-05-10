@@ -2758,46 +2758,86 @@ const importData = async (file) => {
       if(!data.version) throw new Error("Format invalide");
 
       // ── MODE FUSION : on n'écrase JAMAIS ventes, tréso, caisse, session
-      // On fusionne uniquement les cartes en évitant les doublons
-
-      if(data.cards && data.cards.length > 0){
-        let added = 0, skipped = 0;
-
-        // Index des cartes existantes par S/N et par nom+état
-        const existingBySN   = new Map(cards.filter(c=>c.number).map(c=>[c.number.trim().toLowerCase(), c]));
-        const existingByName = new Map(cards.map(c=>[`${c.name.trim().toLowerCase()}|${c.condition||""}|${c.lang||""}`, c]));
-
-        const newCards = [];
-        for(const card of data.cards){
-          const sn        = card.number ? card.number.trim().toLowerCase() : null;
-          const nameKey   = `${card.name.trim().toLowerCase()}|${card.condition||""}|${card.lang||""}`;
-
-          // Doublon par S/N (prioritaire)
-          if(sn && existingBySN.has(sn)){ skipped++; continue; }
-          // Doublon par nom+état+langue (si pas de S/N)
-          if(!sn && existingByName.has(nameKey)){ skipped++; continue; }
-
-          newCards.push(card);
-          if(sn) existingBySN.set(sn, card);
-          existingByName.set(nameKey, card);
-          added++;
-        }
-
-        cards = [...cards, ...newCards];
-
-        // Sync Supabase — uniquement les nouvelles cartes
-        if(isOnline && currentUser && newCards.length > 0){
-          const uid = currentUser.id;
-          setSyncStatus("syncing","↑ Sync nouvelles cartes…");
-          await supa.from("cards").upsert(newCards.map(c=>cardToDb(c,uid)));
-          setSyncStatus("synced","✓ Sauvegardé");
-        }
-
-        persistLocal(); render();
-        toast(`${added} carte${added>1?"s":""} ajoutée${added>1?"s":""} · ${skipped} doublon${skipped>1?"s":""} ignoré${skipped>1?"s":""}`, "#10B981");
-      } else {
-        toast("Aucune carte à importer","#F59E0B");
+      if(!data.cards || data.cards.length === 0){
+        toast("Aucune carte à importer","#F59E0B"); return;
       }
+
+      let added = 0, skipped = 0, updated = 0;
+
+      // Index des cartes existantes
+      const existingBySN   = new Map(cards.filter(c=>c.number).map(c=>[c.number.trim().toLowerCase(), c]));
+      const existingByKey  = new Map(cards.map(c=>[`${c.name.trim().toLowerCase()}|${(c.condition||"").toLowerCase()}|${(c.lang||"").toLowerCase()}`, c]));
+
+      const newCards = [];
+      for(const card of data.cards){
+        const sn     = card.number ? card.number.trim().toLowerCase() : null;
+        const key    = `${card.name.trim().toLowerCase()}|${(card.condition||"").toLowerCase()}|${(card.lang||"").toLowerCase()}`;
+        const hasSN  = !!sn;
+
+        // ── Cas 1 : doublon exact par S/N → skip
+        if(hasSN && existingBySN.has(sn)){ skipped++; continue; }
+
+        // ── Cas 2 : carte sans S/N existante → mettre à jour le prix/coût si changé
+        if(!hasSN && existingByKey.has(key)){
+          const existing = existingByKey.get(key);
+          // Si le nouvel import a un S/N et l'existant non → enrichir
+          if(card.number && !existing.number){
+            existing.number = card.number;
+            updated++;
+          } else {
+            skipped++;
+          }
+          continue;
+        }
+
+        newCards.push(card);
+        if(sn) existingBySN.set(sn, card);
+        existingByKey.set(key, card);
+        added++;
+      }
+
+      cards = [...cards, ...newCards];
+
+      // ── Enrichir les ventes historiques sans S/N
+      // Pour chaque vente, si un item n'a pas de S/N, on cherche la carte dans le catalogue
+      let salesEnriched = 0;
+      const cardsByName = new Map(cards.filter(c=>c.number).map(c=>[c.name.trim().toLowerCase(), c]));
+      sales = sales.map(sale => ({
+        ...sale,
+        items: sale.items.map(item => {
+          if(item.number) return item; // déjà un S/N
+          const catalogCard = cardsByName.get(item.name.trim().toLowerCase());
+          if(catalogCard?.number){
+            salesEnriched++;
+            return {...item, number: catalogCard.number};
+          }
+          return item;
+        })
+      }));
+
+      // Sync Supabase
+      if(isOnline && currentUser){
+        const uid = currentUser.id;
+        setSyncStatus("syncing","↑ Sync…");
+        const ops = [];
+        if(newCards.length > 0) ops.push(supa.from("cards").upsert(newCards.map(c=>cardToDb(c,uid))));
+        // Sync cartes mises à jour (S/N enrichi)
+        if(updated > 0) ops.push(supa.from("cards").upsert(cards.map(c=>cardToDb(c,uid))));
+        // Sync ventes enrichies
+        if(salesEnriched > 0) ops.push(supa.from("sales").upsert(sales.map(s=>saleToDb(s,uid))));
+        await Promise.all(ops);
+        setSyncStatus("synced","✓ Sauvegardé");
+      }
+
+      persistLocal(); render();
+      const parts = [
+        added>0 ? `${added} carte${added>1?"s":""} ajoutée${added>1?"s":""}` : null,
+        skipped>0 ? `${skipped} doublon${skipped>1?"s":""} ignoré${skipped>1?"s":""}` : null,
+        updated>0 ? `${updated} S/N enrichi${updated>1?"s":""}` : null,
+        salesEnriched>0 ? `${salesEnriched} vente${salesEnriched>1?"s":""} liée${salesEnriched>1?"s":""} au S/N` : null,
+      ].filter(Boolean);
+      toast(parts.join(" · "), "#10B981");
+
     } catch(err) {
       console.error(err);
       toast("Erreur : "+err.message,"#EF4444");
