@@ -1896,11 +1896,11 @@ const renderSettings = wrap => {
   wrap.style.paddingBottom = "20px";
   const title = document.createElement("div"); title.className="section-title"; title.textContent="⚙️ Réglages"; wrap.appendChild(title);
 
-  // ── Sauvegarde & Import
   const section = (label) => {
     const s=document.createElement("div"); s.style.cssText="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px"; s.textContent=label; wrap.appendChild(s);
   };
 
+  // ── Données
   section("📦 Données");
   const backupBar=document.createElement("div"); backupBar.style.cssText="display:flex;gap:8px;margin-bottom:8px";
   const expBtn=document.createElement("button"); expBtn.style.cssText="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:12px;color:var(--text2);padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit";
@@ -1910,10 +1910,75 @@ const renderSettings = wrap => {
   backupBar.append(expBtn,impBtn); wrap.appendChild(backupBar);
 
   const infoBox=document.createElement("div"); infoBox.style.cssText="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:8px";
-  infoBox.innerHTML="💡 <strong>Export</strong> = sauvegarde complète (.json) de toutes tes données.<br>💡 <strong>Import</strong> = restaure ou charge un nouveau catalogue depuis un fichier .json.";
+  infoBox.innerHTML="💡 <strong>Export</strong> = sauvegarde complète (.json).<br>💡 <strong>Import</strong> = fusion sans doublon, ne touche pas aux ventes/caisse.";
   wrap.appendChild(infoBox);
 
+  // ── Diagnostic catalogue
+  section("🔍 Diagnostic catalogue");
+  const noSN     = cards.filter(c=>!c.number);
+  const withSN   = cards.filter(c=>c.number);
+  // Doublons : même S/N sur plusieurs cartes
+  const snCounts = {};
+  withSN.forEach(c=>{ const k=c.number.trim().toLowerCase(); snCounts[k]=(snCounts[k]||0)+1; });
+  const dupSNs   = Object.entries(snCounts).filter(([,v])=>v>1);
+  // Doublons nom : même nom+état sur plusieurs cartes
+  const nameCounts = {};
+  cards.forEach(c=>{ const k=`${c.name.trim().toLowerCase()}|${c.condition||""}`; nameCounts[k]=(nameCounts[k]||0)+1; });
+  const dupNames = Object.entries(nameCounts).filter(([,v])=>v>1);
+
+  const diagBox=document.createElement("div"); diagBox.style.cssText="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:8px";
+  diagBox.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div style="text-align:center;background:var(--bg4);border-radius:9px;padding:10px">
+        <div style="font-size:20px;font-weight:800;color:#10B981">${withSN.length}</div>
+        <div style="font-size:10px;color:var(--text3)">Avec S/N</div>
+      </div>
+      <div style="text-align:center;background:var(--bg4);border-radius:9px;padding:10px">
+        <div style="font-size:20px;font-weight:800;color:${noSN.length>0?"#F59E0B":"#10B981"}">${noSN.length}</div>
+        <div style="font-size:10px;color:var(--text3)">Sans S/N</div>
+      </div>
+      <div style="text-align:center;background:var(--bg4);border-radius:9px;padding:10px">
+        <div style="font-size:20px;font-weight:800;color:${dupSNs.length>0?"#EF4444":"#10B981"}">${dupSNs.length}</div>
+        <div style="font-size:10px;color:var(--text3)">S/N en doublon</div>
+      </div>
+      <div style="text-align:center;background:var(--bg4);border-radius:9px;padding:10px">
+        <div style="font-size:20px;font-weight:800;color:${dupNames.length>0?"#F59E0B":"#10B981"}">${dupNames.length}</div>
+        <div style="font-size:10px;color:var(--text3)">Noms en doublon</div>
+      </div>
+    </div>`;
+
+  // Liste des doublons S/N si existants
+  if(dupSNs.length>0){
+    const dupList=document.createElement("div"); dupList.style.cssText="font-size:11px;color:#FCA5A5;margin-bottom:8px";
+    dupList.innerHTML=`<strong>S/N dupliqués :</strong><br>${dupSNs.map(([sn])=>sn).join(", ")}`;
+    diagBox.appendChild(dupList);
+  }
+  wrap.appendChild(diagBox);
+
+  // ── Danger zone
   section("🗑️ Danger zone");
+
+  // Bouton nettoyer sans S/N
+  if(noSN.length>0){
+    const cleanBtn=document.createElement("button");
+    cleanBtn.style.cssText="width:100%;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.4);border-radius:12px;color:#F59E0B;padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;margin-bottom:8px";
+    cleanBtn.textContent=`🧹 Supprimer les ${noSN.length} articles sans S/N`;
+    cleanBtn.onclick=cleanNoSN;
+    wrap.appendChild(cleanBtn);
+    const cleanWarn=document.createElement("div"); cleanWarn.style.cssText="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:12px;padding:10px 14px;font-size:11px;color:#FDE68A;line-height:1.5;margin-bottom:8px";
+    cleanWarn.innerHTML="⚠️ Supprime uniquement les cartes sans S/N du catalogue. Les ventes associées sont conservées.";
+    wrap.appendChild(cleanWarn);
+  }
+
+  // Bouton supprimer doublons S/N
+  if(dupSNs.length>0){
+    const dedupBtn=document.createElement("button");
+    dedupBtn.style.cssText="width:100%;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:12px;color:#EF4444;padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;margin-bottom:8px";
+    dedupBtn.textContent=`🔧 Dédupliquer les ${dupSNs.length} S/N en doublon`;
+    dedupBtn.onclick=deduplicateBySN;
+    wrap.appendChild(dedupBtn);
+  }
+
   const clearStockBtn=document.createElement("button");
   clearStockBtn.style.cssText="width:100%;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.4);border-radius:12px;color:#EF4444;padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;margin-bottom:8px";
   clearStockBtn.textContent="🗑️ Supprimer tout le catalogue";
@@ -1921,7 +1986,7 @@ const renderSettings = wrap => {
   wrap.appendChild(clearStockBtn);
 
   const warnBox=document.createElement("div"); warnBox.style.cssText="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2);border-radius:12px;padding:12px 14px;font-size:11px;color:#FCA5A5;line-height:1.5";
-  warnBox.innerHTML="⚠️ La suppression du catalogue est <strong>irréversible</strong>. Fais un export avant de procéder.";
+  warnBox.innerHTML="⚠️ La suppression du catalogue est <strong>irréversible</strong>. Fais un export avant.";
   wrap.appendChild(warnBox);
 
   section("👤 Compte");
@@ -2703,6 +2768,71 @@ const confirmSale = () => {
 };
 
 // ── EXPORT / IMPORT ────────────────────────────────────────────────────────────
+// ── NETTOYER SANS S/N ─────────────────────────────────────────────────────────
+const cleanNoSN = async () => {
+  const noSN = cards.filter(c=>!c.number);
+  if(noSN.length===0){ toast("Aucune carte sans S/N","#10B981"); return; }
+
+  if(!confirm(`Supprimer les ${noSN.length} articles sans S/N ?\n\nLes ventes associées sont conservées.\nCette action est irréversible.`)) return;
+  if(!confirm(`Confirmer la suppression de ${noSN.length} articles ?`)) return;
+
+  setSyncStatus("syncing","↑ Nettoyage…");
+
+  if(isOnline && currentUser){
+    const ids = noSN.map(c=>c.id);
+    // Supprimer par batch de 100 (limite Supabase)
+    for(let i=0; i<ids.length; i+=100){
+      const batch=ids.slice(i,i+100);
+      const {error}=await supa.from("cards").delete().in("id",batch);
+      if(error){ setSyncStatus("offline","⚠ Erreur"); toast("Erreur : "+error.message,"#EF4444"); return; }
+    }
+  }
+
+  cards = cards.filter(c=>c.number);
+  cart  = cart.filter(i=>i.number);
+  persistLocal(); updateBadge();
+  setSyncStatus("synced","✓ Nettoyé");
+  toast(`${noSN.length} article${noSN.length>1?"s":""} sans S/N supprimé${noSN.length>1?"s":""}  ✓`,"#F59E0B");
+  render();
+};
+
+// ── DÉDUPLIQUER PAR S/N ───────────────────────────────────────────────────────
+const deduplicateBySN = async () => {
+  const snSeen = new Map();
+  const toDelete = [];
+  const toKeep   = [];
+
+  cards.forEach(c=>{
+    if(!c.number){ toKeep.push(c); return; }
+    const key = c.number.trim().toLowerCase();
+    if(snSeen.has(key)){
+      toDelete.push(c); // garde le premier, supprime les suivants
+    } else {
+      snSeen.set(key, c);
+      toKeep.push(c);
+    }
+  });
+
+  if(toDelete.length===0){ toast("Aucun doublon S/N détecté ✓","#10B981"); return; }
+  if(!confirm(`Supprimer ${toDelete.length} doublon${toDelete.length>1?"s":""} S/N ?\n\nLa première occurrence de chaque S/N est conservée.`)) return;
+
+  setSyncStatus("syncing","↑ Déduplication…");
+
+  if(isOnline && currentUser){
+    const ids = toDelete.map(c=>c.id);
+    for(let i=0; i<ids.length; i+=100){
+      const {error}=await supa.from("cards").delete().in("id",ids.slice(i,i+100));
+      if(error){ setSyncStatus("offline","⚠ Erreur"); toast("Erreur : "+error.message,"#EF4444"); return; }
+    }
+  }
+
+  cards = toKeep;
+  persistLocal();
+  setSyncStatus("synced","✓ Dédupliqué");
+  toast(`${toDelete.length} doublon${toDelete.length>1?"s":""} supprimé${toDelete.length>1?"s":""} ✓`,"#10B981");
+  render();
+};
+
 const clearAllStock = async () => {
   const count = cards.length;
   if(count === 0){ toast("Le catalogue est déjà vide","#6B7280"); return; }
