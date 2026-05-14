@@ -586,6 +586,21 @@ body { height: 100%; background: var(--bg); font-family: 'Space Grotesk', sans-s
   </div>
 </div>
 
+<!-- EXCEL PREVIEW MODAL -->
+<div class="modal-overlay" id="xl-preview-modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">📊 Aperçu import Excel</span>
+      <button class="modal-close" onclick="document.getElementById('xl-preview-modal').classList.remove('open');window._pendingXlCards=null">✕</button>
+    </div>
+    <div id="xl-preview-stats"></div>
+    <div class="form-btns" style="margin-top:14px">
+      <button class="btn-cancel" onclick="document.getElementById('xl-preview-modal').classList.remove('open');window._pendingXlCards=null">Annuler</button>
+      <button class="btn-save" onclick="confirmExcelImport()">✓ Confirmer l'import</button>
+    </div>
+  </div>
+</div>
+
 <!-- CASH REGISTER MODAL -->
 <div class="modal-overlay" id="cash-modal">
   <div class="modal-box">
@@ -694,6 +709,8 @@ body { height: 100%; background: var(--bg); font-family: 'Space Grotesk', sans-s
 </div>
 
 <input type="file" id="import-file" accept=".json" style="display:none">
+<input type="file" id="import-excel-file" accept=".xlsx,.xls" style="display:none">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <div id="toast"></div>
 
 <script>
@@ -2030,11 +2047,13 @@ const renderSettings = wrap => {
   const expBtn=document.createElement("button"); expBtn.style.cssText="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:12px;color:var(--text2);padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit";
   expBtn.innerHTML="📤<br><span style='font-size:10px'>Exporter données</span>"; expBtn.onclick=exportData;
   const impBtn=document.createElement("button"); impBtn.style.cssText="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:12px;color:var(--text2);padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit";
-  impBtn.innerHTML="📥<br><span style='font-size:10px'>Importer données</span>"; impBtn.onclick=()=>document.getElementById("import-file").click();
-  backupBar.append(expBtn,impBtn); wrap.appendChild(backupBar);
+  impBtn.innerHTML="📥<br><span style='font-size:10px'>Importer JSON</span>"; impBtn.onclick=()=>document.getElementById("import-file").click();
+  const impXlsBtn=document.createElement("button"); impXlsBtn.style.cssText="flex:1;background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.4);border-radius:12px;color:#10B981;padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit";
+  impXlsBtn.innerHTML="📊<br><span style='font-size:10px'>Importer Excel</span>"; impXlsBtn.onclick=()=>document.getElementById("import-excel-file").click();
+  backupBar.append(expBtn,impBtn,impXlsBtn); wrap.appendChild(backupBar);
 
   const infoBox=document.createElement("div"); infoBox.style.cssText="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:8px";
-  infoBox.innerHTML="💡 <strong>Export</strong> = sauvegarde complète (.json).<br>💡 <strong>Import</strong> = fusion sans doublon, ne touche pas aux ventes/caisse.";
+  infoBox.innerHTML="💡 <strong>Export</strong> = sauvegarde complète (.json).<br>💡 <strong>Import JSON</strong> = restaure depuis une sauvegarde.<br>💡 <strong>Import Excel</strong> = charge directement ton fichier .xlsx (onglets Jap, Achat, Achat 2).";
   wrap.appendChild(infoBox);
 
   // ── Diagnostic catalogue
@@ -3125,7 +3144,214 @@ document.getElementById("card-save").onclick=saveCard;
 document.getElementById("card-delete").onclick=deleteCard;
 document.getElementById("card-modal").onclick=e=>{ if(e.target===e.currentTarget) closeCardModal(); };
 
+// ── IMPORT EXCEL DIRECT ───────────────────────────────────────────────────────
+const ETAT_MAP_XLS = {'NM':'NM','EX':'EX','GD':'GD','LP':'LP','PL':'PL','PO':'PO'};
+const LANG_VALID   = new Set(['FR','EN','JP','CN']);
+
+const parseExcelCards = (wb) => {
+  const cards = [];
+  const errors = [];
+
+  const getPrice = (v1, v2, cost) => {
+    if(v1 && parseFloat(v1) > 0) return Math.round(parseFloat(v1)*100)/100;
+    if(v2 && parseFloat(v2) > 0) return Math.round(parseFloat(v2)*100)/100;
+    return Math.round(cost*3*100)/100;
+  };
+
+  // ── Onglet Pokemon Jap
+  if(wb.Sheets['Pokemon Jap']){
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets['Pokemon Jap'], {header:1, defval:null});
+    const header = rows[0] || [];
+    const col = (name) => header.findIndex(h=>h&&String(h).toLowerCase().includes(name.toLowerCase()));
+    const iNom=0, iCost=col('achat euro'), iPrice=col('prix de vente'), iEtat=col('etat'), iStatut=col('statut');
+    let n=0;
+    for(let i=1;i<rows.length;i++){
+      const r=rows[i];
+      if(!r[iNom]) continue;
+      if(String(r[iStatut]||'').trim() !== 'Vente') continue;
+      const cost  = r[iCost] ? Math.round(parseFloat(r[iCost])*100)/100 : 0;
+      const price = getPrice(r[iPrice], null, cost);
+      const etat  = ETAT_MAP_XLS[String(r[iEtat]||'NM').trim()] || 'NM';
+      cards.push({id:genId(),name:String(r[iNom]).trim(),cat:'carte',game:'pokemon',
+        lang:'JP',condition:etat,number:null,price,cost,stock:1,
+        partner:'none',shared:false,photo:null});
+      n++;
+    }
+    console.log(`Jap: ${n} cartes Vente`);
+  }
+
+  // ── Onglet Achat
+  if(wb.Sheets['Achat']){
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets['Achat'], {header:1, defval:null});
+    const header = rows[0] || [];
+    const col = (name) => header.findIndex(h=>h&&String(h).toLowerCase().includes(name.toLowerCase()));
+    const iNom=col('description'), iSN=col('s/n'), iEtat=col('etat'),
+          iQte=col('quantité'), iPrixCarte=col('prix/carte'),
+          iStatut=col('vente'), iPrixVente=col('prix de vente'),
+          iPrixVendu=col('prix vendu'), iLang=col('langue');
+    let n=0;
+    for(let i=1;i<rows.length;i++){
+      const r=rows[i];
+      if(!r[iNom]) continue;
+      if(String(r[iStatut]||'').trim() !== 'Vente') continue;
+      const nom   = String(r[iNom]).trim();
+      const sn    = r[iSN] && String(r[iSN]).trim() && !['n/a','none',''].includes(String(r[iSN]).trim().toLowerCase()) ? String(r[iSN]).trim() : null;
+      const etat  = ETAT_MAP_XLS[String(r[iEtat]||'NM').trim()] || 'NM';
+      const qte   = r[iQte] ? Math.max(1,parseInt(parseFloat(r[iQte]))) : 1;
+      const cost  = r[iPrixCarte] ? Math.round(parseFloat(r[iPrixCarte])*100)/100 : 0;
+      const price = getPrice(r[iPrixVente], r[iPrixVendu], cost);
+      const lang  = r[iLang] && LANG_VALID.has(String(r[iLang]).trim()) ? String(r[iLang]).trim() : 'FR';
+      cards.push({id:genId(),name:nom,cat:'carte',game:'pokemon',
+        lang,condition:etat,number:sn,price,cost,stock:qte,
+        partner:'none',shared:false,photo:null});
+      n++;
+    }
+    console.log(`Achat: ${n} cartes Vente`);
+  }
+
+  // ── Onglet Achat 2 (Associé FR)
+  if(wb.Sheets['Achat 2']){
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets['Achat 2'], {header:1, defval:null});
+    let n=0;
+    for(let i=1;i<rows.length;i++){
+      const r=rows[i];
+      if(!r[0] || ['Carte',null,''].includes(r[0])) continue;
+      const nom   = String(r[0]).trim();
+      const etat  = ETAT_MAP_XLS[String(r[1]||'NM').trim()] || 'NM';
+      const price = r[2] && parseFloat(r[2])>0 ? Math.round(parseFloat(r[2])*100)/100 : 0;
+      const cost  = r[3] ? Math.round(parseFloat(r[3])*100)/100 : 0;
+      cards.push({id:genId(),name:nom,cat:'carte',game:'pokemon',
+        lang:'FR',condition:etat,number:null,price,cost,stock:1,
+        partner:'fr',shared:true,photo:null});
+      n++;
+    }
+    console.log(`Achat 2: ${n} cartes`);
+  }
+
+  return {cards, errors};
+};
+
+const importExcel = async (file) => {
+  if(!file) return;
+  setSyncStatus("syncing","↓ Lecture Excel…");
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const wb = XLSX.read(arrayBuffer, {type:'array'});
+
+    // Vérifier les onglets
+    const missing = ['Pokemon Jap','Achat','Achat 2'].filter(s=>!wb.Sheets[s]);
+    if(missing.length>0){
+      toast(`Onglets manquants : ${missing.join(', ')}`, "#EF4444");
+      setSyncStatus("offline","⚠ Erreur");
+      return;
+    }
+
+    const {cards:newCards} = parseExcelCards(wb);
+    if(newCards.length===0){ toast("Aucune carte Vente trouvée","#F59E0B"); setSyncStatus("synced",""); return; }
+
+    // Afficher le modal de prévisualisation
+    const jap   = newCards.filter(c=>c.lang==='JP').length;
+    const fr    = newCards.filter(c=>c.lang!=='JP'&&c.partner==='none').length;
+    const assoc = newCards.filter(c=>c.partner==='fr').length;
+    const sansPN= newCards.filter(c=>!c.number).length;
+
+    document.getElementById("xl-preview-stats").innerHTML=`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:22px;font-weight:800;color:#10B981">${newCards.length}</div>
+          <div style="font-size:11px;color:var(--text3)">Cartes trouvées</div>
+        </div>
+        <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:22px;font-weight:800;color:#F59E0B">${sansPN}</div>
+          <div style="font-size:11px;color:var(--text3)">Sans S/N</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.8">
+        🇯🇵 <strong>${jap}</strong> cartes japonaises<br>
+        🇫🇷 <strong>${fr}</strong> cartes FR solo<br>
+        🤝 <strong>${assoc}</strong> cartes Associé FR<br>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:10px;background:var(--bg3);border-radius:9px;padding:9px">
+        ⚡ La fusion ignorera les doublons (par S/N ou nom+état+langue).<br>
+        Les ventes, caisse et sessions ne seront pas touchées.
+      </div>`;
+
+    // Stocker les cartes en attente de confirmation
+    window._pendingXlCards = newCards;
+    document.getElementById("xl-preview-modal").classList.add("open");
+    setSyncStatus("synced","✓ Fichier lu");
+
+  } catch(err) {
+    console.error(err);
+    setSyncStatus("offline","⚠ Erreur");
+    toast("Erreur lecture Excel : "+err.message,"#EF4444");
+  }
+};
+
+const confirmExcelImport = async () => {
+  const newCards = window._pendingXlCards || [];
+  if(newCards.length===0) return;
+  document.getElementById("xl-preview-modal").classList.remove("open");
+
+  // Même logique de fusion que importData
+  let added=0, skipped=0, enriched=0;
+  const existingBySN  = new Map(cards.filter(c=>c.number).map(c=>[c.number.trim().toLowerCase(), c]));
+  const existingByKey = new Map(cards.map(c=>[`${c.name.trim().toLowerCase()}|${(c.condition||"").toLowerCase()}|${(c.lang||"").toLowerCase()}`, c]));
+
+  const toAdd = [];
+  for(const card of newCards){
+    const sn  = card.number ? card.number.trim().toLowerCase() : null;
+    const key = `${card.name.trim().toLowerCase()}|${(card.condition||"").toLowerCase()}|${(card.lang||"").toLowerCase()}`;
+
+    if(sn && existingBySN.has(sn)){ skipped++; continue; }
+    if(!sn && existingByKey.has(key)){
+      const ex = existingByKey.get(key);
+      if(card.number && !ex.number){ ex.number=card.number; enriched++; }
+      else skipped++;
+      continue;
+    }
+    toAdd.push(card);
+    if(sn) existingBySN.set(sn, card);
+    existingByKey.set(key, card);
+    added++;
+  }
+
+  cards = [...cards, ...toAdd];
+
+  // Enrichir ventes sans S/N
+  let salesEnriched=0;
+  const byName = new Map(cards.filter(c=>c.number).map(c=>[c.name.trim().toLowerCase(), c]));
+  sales = sales.map(s=>({...s, items:s.items.map(i=>{
+    if(i.number) return i;
+    const cc=byName.get(i.name.trim().toLowerCase());
+    if(cc?.number){ salesEnriched++; return {...i,number:cc.number}; }
+    return i;
+  })}));
+
+  if(isOnline && currentUser){
+    const uid=currentUser.id;
+    setSyncStatus("syncing","↑ Sync…");
+    const ops=[];
+    if(toAdd.length>0) ops.push(supa.from("cards").upsert(toAdd.map(c=>cardToDb(c,uid))));
+    if(enriched>0) ops.push(supa.from("cards").upsert(cards.map(c=>cardToDb(c,uid))));
+    if(salesEnriched>0) ops.push(supa.from("sales").upsert(sales.map(s=>saleToDb(s,uid))));
+    await Promise.all(ops);
+    setSyncStatus("synced","✓ Sauvegardé");
+  }
+
+  persistLocal(); render();
+  const parts=[
+    added>0?`${added} carte${added>1?"s":""} ajoutée${added>1?"s":""}`:null,
+    skipped>0?`${skipped} doublon${skipped>1?"s":""} ignoré${skipped>1?"s":""}`:null,
+    enriched>0?`${enriched} S/N enrichi${enriched>1?"s":""}`:null,
+    salesEnriched>0?`${salesEnriched} vente${salesEnriched>1?"s":""} liée${salesEnriched>1?"s":""}`:null,
+  ].filter(Boolean);
+  toast(parts.join(" · "),"#10B981");
+  window._pendingXlCards=null;
+};
+
 document.getElementById("import-file").onchange = e => { importData(e.target.files[0]); e.target.value=""; };
+document.getElementById("import-excel-file").onchange = e => { importExcel(e.target.files[0]); e.target.value=""; };
 
 // Autocomplete events
 document.getElementById("f-search-card").oninput = e => {
