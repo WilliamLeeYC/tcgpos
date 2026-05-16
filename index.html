@@ -1566,6 +1566,7 @@ const createManualSession = async () => {
     meta:{ revenu, marge, margeNette, qty, nbVentes:selectedIds.length,
       fraisStand, partnerDue, startCash, cashFinale:startCash+revenu,
       durStr:"—", startDate:sessionDateStr,
+      salesIds: selectedIds,
       ventes:sessionSales.map(s=>({date:s.date, total:s.total,
         items:s.items.map(i=>({name:i.name, qty:i.qty, price:i.price, cost:i.cost||0, partner:i.partner||"none"}))}))
     }
@@ -1973,7 +1974,9 @@ const endSession = async () => {
     meta: {
       revenu, marge, margeNette, qty, nbVentes:sessionSales.length,
       fraisStand, partnerDue, startCash, cashFinale:startCash+revenu,
-      durStr, startDate, ventes: sessionSales.map(s=>({
+      durStr, startDate,
+      salesIds: sessionSales.map(s=>s.id),
+      ventes: sessionSales.map(s=>({
         date:s.date, total:s.total,
         items:s.items.map(i=>({name:i.name, qty:i.qty, price:i.price, cost:i.cost||0, partner:i.partner||"none"}))
       }))
@@ -2947,59 +2950,52 @@ const confirmSale = () => {
 // ── NETTOYER SANS S/N ─────────────────────────────────────────────────────────
 // ── SYNC RÉTROACTIF DATES DE VENTE ───────────────────────────────────────────
 const retroSyncSaleDates = async () => {
-  const bilans = treasury.filter(e=>e.type==="session_bilan" && e.meta?.ventes);
-  if(bilans.length===0){ toast("Aucune session avec détail de ventes trouvée","#F59E0B"); return; }
+  // Construire une map saleId → date de session depuis tous les bilans
+  const saleDateMap = new Map(); // saleId → {date, ts}
+  treasury.filter(e=>e.type==="session_bilan").forEach(bilan=>{
+    const ids = bilan.meta?.salesIds || [];
+    ids.forEach(id=>{
+      saleDateMap.set(id, {date: bilan.date, ts: bilan.ts});
+    });
+  });
 
-  if(!confirm(`Synchroniser les dates de vente pour ${bilans.length} session${bilans.length>1?"s":""} ?\n\nLes ventes associées à chaque session prendront la date de la session.`)) return;
-
-  setSyncStatus("syncing","↑ Synchronisation…");
-  let totalUpdated = 0;
-  const salesUpdated = [];
-
-  // Pour chaque bilan, identifier les ventes correspondantes par nom+total+items
-  for(const bilan of bilans){
-    const sessionDateStr = bilan.date;
-    const sessionTs      = bilan.ts;
-    const bilanVentes    = bilan.meta.ventes || [];
-
-    // Construire un index des ventes du bilan par total+items
-    const bilanKeys = new Set(bilanVentes.map(v=>{
-      const itemKey = v.items.map(i=>`${i.name}|${i.qty}`).sort().join(',');
-      return `${Math.round(v.total*100)}|${itemKey}`;
-    }));
-
-    for(const sale of sales){
-      // Construire la clé de la vente
-      const itemKey = sale.items.map(i=>`${i.name}|${i.qty}`).sort().join(',');
-      const saleKey = `${Math.round(sale.total*100)}|${itemKey}`;
-
-      if(bilanKeys.has(saleKey)){
-        // Cette vente appartient à ce bilan — mettre à jour la date
-        if(sale.date !== sessionDateStr || sale.ts !== sessionTs){
-          sale.date = sessionDateStr;
-          sale.ts   = sessionTs;
-          salesUpdated.push(sale);
-          totalUpdated++;
-        }
-      }
-    }
+  if(saleDateMap.size===0){
+    toast("Aucune vente liée à une session trouvée","#F59E0B");
+    return;
   }
 
-  if(totalUpdated===0){ toast("Toutes les dates sont déjà synchronisées ✓","#10B981"); setSyncStatus("synced","✓"); return; }
+  if(!confirm(`Synchroniser les dates de ${saleDateMap.size} vente${saleDateMap.size>1?"s":""} avec leur session brocante ?`)) return;
+
+  setSyncStatus("syncing","↑ Synchronisation…");
+  let updated = 0;
+  const toSync = [];
+
+  sales = sales.map(s=>{
+    if(!saleDateMap.has(s.id)) return s;
+    const {date, ts} = saleDateMap.get(s.id);
+    if(s.date===date && s.ts===ts) return s; // déjà à jour
+    toSync.push({...s, date, ts});
+    updated++;
+    return {...s, date, ts};
+  });
+
+  if(updated===0){
+    toast("Toutes les dates sont déjà synchronisées ✓","#10B981");
+    setSyncStatus("synced","✓");
+    return;
+  }
 
   persistLocal();
 
-  // Sync Supabase
   if(isOnline && currentUser){
-    const uid = currentUser.id;
-    for(const s of salesUpdated){
+    for(const s of toSync){
       await supa.from("sales").update({date_str:s.date, ts:s.ts}).eq("id",s.id);
     }
     setSyncStatus("synced","✓ Sauvegardé");
   }
 
   render();
-  toast(`${totalUpdated} vente${totalUpdated>1?"s":""} mise${totalUpdated>1?"s":""} à jour ✓`,"#60A5FA");
+  toast(`${updated} vente${updated>1?"s":""} synchronisée${updated>1?"s":""} ✓`,"#60A5FA");
 };
 
 const cleanNoSN = async () => {
