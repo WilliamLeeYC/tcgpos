@@ -1541,6 +1541,17 @@ const createManualSession = async () => {
   if(selectedIds.length===0){ toast("Sélectionne au moins une vente","#EF4444"); return; }
 
   const sessionDate  = new Date(dateVal);
+  const sessionDateStr = sessionDate.toLocaleString("fr-CA");
+
+  // Mettre à jour les dates des ventes sélectionnées
+  const updatedSales = [];
+  sales = sales.map(s => {
+    if(!selectedIds.includes(s.id)) return s;
+    const updated = {...s, date: sessionDateStr, ts: sessionDate.getTime()};
+    updatedSales.push(updated);
+    return updated;
+  });
+
   const sessionSales = sales.filter(s=>selectedIds.includes(s.id));
   const revenu     = sessionSales.reduce((s,v)=>s+v.total,0);
   const marge      = sessionSales.reduce((s,v)=>s+v.items.reduce((a,i)=>a+(i.price-(i.cost||0))*i.qty,0),0);
@@ -1550,29 +1561,36 @@ const createManualSession = async () => {
 
   const entries = [];
   const bilanEntry = {
-    id:genId(), date:sessionDate.toLocaleString("fr-CA"), ts:sessionDate.getTime(),
+    id:genId(), date:sessionDateStr, ts:sessionDate.getTime(),
     type:"session_bilan", desc:`Session brocante · ${selectedIds.length} ventes (manuel)`, amount:revenu,
     meta:{ revenu, marge, margeNette, qty, nbVentes:selectedIds.length,
       fraisStand, partnerDue, startCash, cashFinale:startCash+revenu,
-      durStr:"—", startDate:sessionDate.toLocaleString("fr-CA"),
+      durStr:"—", startDate:sessionDateStr,
       ventes:sessionSales.map(s=>({date:s.date, total:s.total,
         items:s.items.map(i=>({name:i.name, qty:i.qty, price:i.price, cost:i.cost||0, partner:i.partner||"none"}))}))
     }
   };
   entries.push(bilanEntry);
-  if(fraisStand>0) entries.push({id:genId(), date:sessionDate.toLocaleString("fr-CA"),
+  if(fraisStand>0) entries.push({id:genId(), date:sessionDateStr,
     ts:sessionDate.getTime(), type:"frais", fraisCat:"stand", desc:"Frais de stand brocante", amount:fraisStand});
 
   treasury.unshift(...entries);
+
   if(isOnline && currentUser){
+    const uid = currentUser.id;
     setSyncStatus("syncing","↑ Sauvegarde…");
-    await supa.from("treasury").upsert(entries.map(t=>treasuryToDb(t,currentUser.id)));
+    await Promise.all([
+      supa.from("treasury").upsert(entries.map(t=>treasuryToDb(t,uid))),
+      // Mettre à jour les dates des ventes dans Supabase
+      ...updatedSales.map(s=>supa.from("sales").update({date_str:s.date, ts:s.ts}).eq("id",s.id)),
+    ]);
     setSyncStatus("synced","✓ Sauvegardé");
   }
+
   persistLocal();
   document.getElementById("create-session-modal").classList.remove("open");
   render();
-  toast(`Session créée · ${fmt(revenu)}€ CA · ${fmt(margeNette)}€ net ✓`,"#A78BFA");
+  toast(`Session créée · ${fmt(revenu)}€ CA · ${fmt(margeNette)}€ net · dates mises à jour ✓`,"#A78BFA");
 };
 
 const cancelSale = async (saleId, e) => {
@@ -1725,17 +1743,15 @@ const renderBrocante = wrap => {
               <div style="font-size:10px;color:var(--text3)">${c.lbl}</div></div>`;
           });
           card.appendChild(grid);
-          // Déductions
           if((m.fraisStand||0)>0||(m.partnerDue||0)>0){
             const ded=document.createElement("div"); ded.style.cssText="font-size:11px;color:var(--text3);margin-bottom:8px;display:flex;gap:10px";
             if((m.fraisStand||0)>0) ded.innerHTML+=`<span>🏪 Frais stand: -${fmt(m.fraisStand)}€</span>`;
             if((m.partnerDue||0)>0) ded.innerHTML+=`<span>🤝 Associé: -${fmt(m.partnerDue)}€</span>`;
             card.appendChild(ded);
           }
-          // Détail ventes (collapsed par défaut)
           if(m.ventes && m.ventes.length>0){
             const toggle=document.createElement("button");
-            toggle.style.cssText="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:9px;color:var(--text2);padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit";
+            toggle.style.cssText="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:9px;color:var(--text2);padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;margin-bottom:6px";
             toggle.textContent=`▼ Voir le détail des ventes (${m.ventes.length})`;
             const detail=document.createElement("div"); detail.style.display="none"; detail.style.marginTop="8px";
             m.ventes.forEach(v=>{
@@ -1752,13 +1768,18 @@ const renderBrocante = wrap => {
             };
             card.appendChild(toggle); card.appendChild(detail);
           }
-          // Bouton export txt
-          const expBtn=document.createElement("button");
-          expBtn.style.cssText="width:100%;background:transparent;border:1px solid var(--border2);border-radius:9px;color:var(--text2);padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;margin-top:8px";
-          expBtn.textContent="📄 Exporter ce bilan (.txt)";
-          expBtn.onclick=()=>exportBilanTxt(s);
-          card.appendChild(expBtn);
+        } else {
+          // Ancien bilan sans meta — affichage simplifié
+          const simple=document.createElement("div"); simple.style.cssText="font-size:12px;color:var(--text3);margin-bottom:8px";
+          simple.textContent=s.desc||"Session brocante";
+          card.appendChild(simple);
         }
+        // Bouton export TOUJOURS visible
+        const expBtn=document.createElement("button");
+        expBtn.style.cssText="width:100%;background:transparent;border:1px solid var(--border2);border-radius:9px;color:var(--text2);padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;margin-top:4px";
+        expBtn.textContent="📄 Exporter ce bilan (.txt)";
+        expBtn.onclick=e=>{ e.stopPropagation(); exportBilanTxt(s); };
+        card.appendChild(expBtn);
         wrap.appendChild(card);
       });
     }
@@ -2099,6 +2120,18 @@ const renderSettings = wrap => {
   wrap.appendChild(diagBox);
 
   // ── Danger zone
+  section("🔧 Maintenance");
+
+  // Bouton synchronisation rétroactive des dates de vente
+  const syncDatesBtn=document.createElement("button");
+  syncDatesBtn.style.cssText="width:100%;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.4);border-radius:12px;color:#60A5FA;padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;margin-bottom:8px";
+  syncDatesBtn.textContent="📅 Synchroniser les dates de vente avec les sessions";
+  syncDatesBtn.onclick=retroSyncSaleDates;
+  wrap.appendChild(syncDatesBtn);
+  const syncInfo=document.createElement("div"); syncInfo.style.cssText="background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.2);border-radius:12px;padding:10px 14px;font-size:11px;color:#93C5FD;line-height:1.5;margin-bottom:8px";
+  syncInfo.innerHTML="ℹ️ Pour chaque session brocante existante, met à jour la date des ventes associées à la date de la session.";
+  wrap.appendChild(syncInfo);
+
   section("🗑️ Danger zone");
 
   // Bouton nettoyer sans S/N
@@ -2912,6 +2945,63 @@ const confirmSale = () => {
 
 // ── EXPORT / IMPORT ────────────────────────────────────────────────────────────
 // ── NETTOYER SANS S/N ─────────────────────────────────────────────────────────
+// ── SYNC RÉTROACTIF DATES DE VENTE ───────────────────────────────────────────
+const retroSyncSaleDates = async () => {
+  const bilans = treasury.filter(e=>e.type==="session_bilan" && e.meta?.ventes);
+  if(bilans.length===0){ toast("Aucune session avec détail de ventes trouvée","#F59E0B"); return; }
+
+  if(!confirm(`Synchroniser les dates de vente pour ${bilans.length} session${bilans.length>1?"s":""} ?\n\nLes ventes associées à chaque session prendront la date de la session.`)) return;
+
+  setSyncStatus("syncing","↑ Synchronisation…");
+  let totalUpdated = 0;
+  const salesUpdated = [];
+
+  // Pour chaque bilan, identifier les ventes correspondantes par nom+total+items
+  for(const bilan of bilans){
+    const sessionDateStr = bilan.date;
+    const sessionTs      = bilan.ts;
+    const bilanVentes    = bilan.meta.ventes || [];
+
+    // Construire un index des ventes du bilan par total+items
+    const bilanKeys = new Set(bilanVentes.map(v=>{
+      const itemKey = v.items.map(i=>`${i.name}|${i.qty}`).sort().join(',');
+      return `${Math.round(v.total*100)}|${itemKey}`;
+    }));
+
+    for(const sale of sales){
+      // Construire la clé de la vente
+      const itemKey = sale.items.map(i=>`${i.name}|${i.qty}`).sort().join(',');
+      const saleKey = `${Math.round(sale.total*100)}|${itemKey}`;
+
+      if(bilanKeys.has(saleKey)){
+        // Cette vente appartient à ce bilan — mettre à jour la date
+        if(sale.date !== sessionDateStr || sale.ts !== sessionTs){
+          sale.date = sessionDateStr;
+          sale.ts   = sessionTs;
+          salesUpdated.push(sale);
+          totalUpdated++;
+        }
+      }
+    }
+  }
+
+  if(totalUpdated===0){ toast("Toutes les dates sont déjà synchronisées ✓","#10B981"); setSyncStatus("synced","✓"); return; }
+
+  persistLocal();
+
+  // Sync Supabase
+  if(isOnline && currentUser){
+    const uid = currentUser.id;
+    for(const s of salesUpdated){
+      await supa.from("sales").update({date_str:s.date, ts:s.ts}).eq("id",s.id);
+    }
+    setSyncStatus("synced","✓ Sauvegardé");
+  }
+
+  render();
+  toast(`${totalUpdated} vente${totalUpdated>1?"s":""} mise${totalUpdated>1?"s":""} à jour ✓`,"#60A5FA");
+};
+
 const cleanNoSN = async () => {
   const noSN = cards.filter(c=>!c.number);
   if(noSN.length===0){ toast("Aucune carte sans S/N","#10B981"); return; }
@@ -3158,37 +3248,41 @@ const parseExcelCards = (wb) => {
     return Math.round(cost*3*100)/100;
   };
 
-  // ── Onglet Pokemon Jap
-  if(wb.Sheets['Pokemon Jap']){
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets['Pokemon Jap'], {header:1, defval:null});
-    const header = rows[0] || [];
-    const col = (name) => header.findIndex(h=>h&&String(h).toLowerCase().includes(name.toLowerCase()));
-    const iNom=0, iCost=col('achat euro'), iPrice=col('prix de vente'), iEtat=col('etat'), iStatut=col('statut');
+  // ── Onglet Pokemon Jap (cherche par nom partiel)
+  const japSheetName = Object.keys(wb.Sheets).find(n=>n.toLowerCase().includes('jap'));
+  if(japSheetName){
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[japSheetName], {header:1, defval:null});
+    const header = (rows[0]||[]).map(h=>h?String(h).toLowerCase().trim():'');
+    const ci = (kw) => header.findIndex(h=>h.includes(kw.toLowerCase()));
+    const iNom=0, iCost=ci('achat euro'), iPrice=ci('prix de vente'), iEtat=ci('etat'), iStatut=ci('statut');
     let n=0;
     for(let i=1;i<rows.length;i++){
       const r=rows[i];
       if(!r[iNom]) continue;
       if(String(r[iStatut]||'').trim() !== 'Vente') continue;
-      const cost  = r[iCost] ? Math.round(parseFloat(r[iCost])*100)/100 : 0;
-      const price = getPrice(r[iPrice], null, cost);
+      const cost  = r[iCost]  ? Math.round(parseFloat(r[iCost])*100)/100  : 0;
+      const price = getPrice(iPrice>=0?r[iPrice]:null, null, cost);
       const etat  = ETAT_MAP_XLS[String(r[iEtat]||'NM').trim()] || 'NM';
       cards.push({id:genId(),name:String(r[iNom]).trim(),cat:'carte',game:'pokemon',
         lang:'JP',condition:etat,number:null,price,cost,stock:1,
         partner:'none',shared:false,photo:null});
       n++;
     }
-    console.log(`Jap: ${n} cartes Vente`);
+    console.log(`Jap (${japSheetName}): ${n} cartes Vente`);
+  } else {
+    console.warn('Onglet Jap non trouvé');
   }
 
   // ── Onglet Achat
-  if(wb.Sheets['Achat']){
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets['Achat'], {header:1, defval:null});
-    const header = rows[0] || [];
-    const col = (name) => header.findIndex(h=>h&&String(h).toLowerCase().includes(name.toLowerCase()));
-    const iNom=col('description'), iSN=col('s/n'), iEtat=col('etat'),
-          iQte=col('quantité'), iPrixCarte=col('prix/carte'),
-          iStatut=col('vente'), iPrixVente=col('prix de vente'),
-          iPrixVendu=col('prix vendu'), iLang=col('langue');
+  const achatSheetName = Object.keys(wb.Sheets).find(n=>n.toLowerCase()==='achat');
+  if(achatSheetName){
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[achatSheetName], {header:1, defval:null});
+    const header = (rows[0]||[]).map(h=>h?String(h).toLowerCase().trim():'');
+    const ci = (kw) => header.findIndex(h=>h.includes(kw.toLowerCase()));
+    const iNom=ci('description'), iSN=ci('s/n'), iEtat=ci('etat'),
+          iQte=ci('quantit'), iPrixCarte=ci('prix/carte'),
+          iStatut=ci('vente'), iPrixVente=ci('prix de vente'),
+          iPrixVendu=ci('prix vendu'), iLang=ci('langue');
     let n=0;
     for(let i=1;i<rows.length;i++){
       const r=rows[i];
@@ -3199,19 +3293,20 @@ const parseExcelCards = (wb) => {
       const etat  = ETAT_MAP_XLS[String(r[iEtat]||'NM').trim()] || 'NM';
       const qte   = r[iQte] ? Math.max(1,parseInt(parseFloat(r[iQte]))) : 1;
       const cost  = r[iPrixCarte] ? Math.round(parseFloat(r[iPrixCarte])*100)/100 : 0;
-      const price = getPrice(r[iPrixVente], r[iPrixVendu], cost);
+      const price = getPrice(iPrixVente>=0?r[iPrixVente]:null, iPrixVendu>=0?r[iPrixVendu]:null, cost);
       const lang  = r[iLang] && LANG_VALID.has(String(r[iLang]).trim()) ? String(r[iLang]).trim() : 'FR';
       cards.push({id:genId(),name:nom,cat:'carte',game:'pokemon',
         lang,condition:etat,number:sn,price,cost,stock:qte,
         partner:'none',shared:false,photo:null});
       n++;
     }
-    console.log(`Achat: ${n} cartes Vente`);
+    console.log(`Achat (${achatSheetName}): ${n} cartes Vente`);
   }
 
   // ── Onglet Achat 2 (Associé FR)
-  if(wb.Sheets['Achat 2']){
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets['Achat 2'], {header:1, defval:null});
+  const a2SheetName = Object.keys(wb.Sheets).find(n=>n.toLowerCase().includes('achat 2'));
+  if(a2SheetName){
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[a2SheetName], {header:1, defval:null});
     let n=0;
     for(let i=1;i<rows.length;i++){
       const r=rows[i];
@@ -3225,7 +3320,7 @@ const parseExcelCards = (wb) => {
         partner:'fr',shared:true,photo:null});
       n++;
     }
-    console.log(`Achat 2: ${n} cartes`);
+    console.log(`Achat 2 (${a2SheetName}): ${n} cartes`);
   }
 
   return {cards, errors};
@@ -3238,8 +3333,14 @@ const importExcel = async (file) => {
     const arrayBuffer = await file.arrayBuffer();
     const wb = XLSX.read(arrayBuffer, {type:'array'});
 
-    // Vérifier les onglets
-    const missing = ['Pokemon Jap','Achat','Achat 2'].filter(s=>!wb.Sheets[s]);
+    const sheetNames = Object.keys(wb.Sheets).map(n=>n.toLowerCase());
+    const hasJap   = sheetNames.some(n=>n.includes('jap'));
+    const hasAchat = sheetNames.some(n=>n==='achat');
+    const hasA2    = sheetNames.some(n=>n.includes('achat 2'));
+    const missing  = [];
+    if(!hasJap)   missing.push('Pokemon Jap');
+    if(!hasAchat) missing.push('Achat');
+    if(!hasA2)    missing.push('Achat 2');
     if(missing.length>0){
       toast(`Onglets manquants : ${missing.join(', ')}`, "#EF4444");
       setSyncStatus("offline","⚠ Erreur");
