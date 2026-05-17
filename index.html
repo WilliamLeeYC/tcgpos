@@ -1432,6 +1432,24 @@ const renderHistory = wrap => {
 
   if(sales.length===0){ wrap.appendChild(mkEmpty("📋","Aucune vente","Les ventes apparaîtront ici")); return; }
 
+  // Index : saleId → bilan de session
+  const saleSessionMap = new Map();
+  treasury.filter(e=>e.type==="session_bilan").forEach(bilan=>{
+    // Via salesIds directs
+    (bilan.meta?.salesIds||[]).forEach(id=>saleSessionMap.set(id, bilan));
+    // Via correspondance par contenu (anciens bilans)
+    if(!(bilan.meta?.salesIds?.length) && bilan.meta?.ventes){
+      bilan.meta.ventes.forEach(v=>{
+        const key=`${Math.round(v.total*100)}|${v.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(',')}`;
+        const match=sales.find(s=>{
+          const sk=`${Math.round(s.total*100)}|${s.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(',')}`;
+          return sk===key;
+        });
+        if(match&&!saleSessionMap.has(match.id)) saleSessionMap.set(match.id, bilan);
+      });
+    }
+  });
+
   sales.forEach(sale=>{
     const saleMargin=sale.items.reduce((a,i)=>(i.price-(i.cost||0))*i.qty+a,0);
     const wrap2=document.createElement("div"); wrap2.className="sale-row";
@@ -1444,6 +1462,18 @@ const renderHistory = wrap => {
     dateSpan.textContent=sale.date+(sale.discount>0?` · -${sale.discount}%`:"");
     dateSpan.onclick=e=>{ e.stopPropagation(); editSaleDate(sale.id); };
 
+    // Badge session brocante
+    const sessionBilan = saleSessionMap.get(sale.id);
+    const leftDiv=document.createElement("div"); leftDiv.style.cssText="display:flex;flex-direction:column;gap:3px";
+    leftDiv.appendChild(dateSpan);
+    if(sessionBilan){
+      const sessionName = sessionBilan.meta?.name || sessionBilan.desc || "Session brocante";
+      const badge=document.createElement("span");
+      badge.style.cssText="display:inline-flex;align-items:center;gap:4px;background:rgba(167,139,250,.15);color:#A78BFA;border:1px solid rgba(167,139,250,.3);border-radius:20px;padding:2px 8px;font-size:10px;font-weight:700;width:fit-content";
+      badge.textContent=`🏪 ${sessionName}`;
+      leftDiv.appendChild(badge);
+    }
+
     const rightDiv=document.createElement("div"); rightDiv.style.cssText="display:flex;align-items:center;gap:8px";
     rightDiv.innerHTML=`<div style="text-align:right"><div style="color:#10B981;font-weight:800;font-size:15px">${fmt(sale.total)} €</div>
       <div style="color:#60A5FA;font-size:10px">marge ${fmt(saleMargin)}€</div></div>`;
@@ -1452,7 +1482,7 @@ const renderHistory = wrap => {
     cancelBtn.textContent="✕ Annuler";
     cancelBtn.onclick=e=>cancelSale(sale.id,e);
     rightDiv.appendChild(cancelBtn);
-    hdr.append(dateSpan,rightDiv);
+    hdr.append(leftDiv,rightDiv);
     wrap2.appendChild(hdr);
 
     const itemsList=document.createElement("div"); itemsList.style.cssText="display:flex;flex-direction:column;gap:6px;margin-top:8px";
@@ -1566,6 +1596,7 @@ const createManualSession = async () => {
     meta:{ revenu, marge, margeNette, qty, nbVentes:selectedIds.length,
       fraisStand, partnerDue, startCash, cashFinale:startCash+revenu,
       durStr:"—", startDate:sessionDateStr,
+      name: `Brocante ${sessionDate.toLocaleDateString("fr-FR")}`,
       salesIds: selectedIds,
       ventes:sessionSales.map(s=>({date:s.date, total:s.total,
         items:s.items.map(i=>({name:i.name, qty:i.qty, price:i.price, cost:i.cost||0, partner:i.partner||"none"}))}))
@@ -1722,16 +1753,35 @@ const renderBrocante = wrap => {
         const card=document.createElement("div");
         card.style.cssText="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer";
         // Header
+        const sessionName = m.name || s.desc || "Session brocante";
         const hdr=document.createElement("div"); hdr.style.cssText="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px";
         hdr.innerHTML=`
-          <div>
-            <div style="font-weight:700;font-size:13px">${s.date}</div>
-            <div style="font-size:11px;color:var(--text3);margin-top:2px">${m.durStr||""} · ${m.nbVentes||s.desc.match(/(\d+) ventes/)?.[1]||"?"} ventes · ${m.qty||"?"} articles</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sessionName}</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">${s.date.slice(0,10)} · ${m.durStr||""} · ${m.nbVentes||"?"} ventes · ${m.qty||"?"} articles</div>
           </div>
-          <div style="text-align:right">
+          <div style="text-align:right;flex-shrink:0;margin-left:8px">
             <div style="font-weight:800;font-size:16px;color:#10B981">+${fmt(s.amount)}€</div>
             ${m.margeNette!=null?`<div style="font-size:11px;color:#60A5FA">bénéf net: ${fmt(m.margeNette)}€</div>`:""}
           </div>`;
+        // Bouton renommer
+        const renameBtn=document.createElement("button");
+        renameBtn.style.cssText="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:4px;flex-shrink:0";
+        renameBtn.textContent="✏️"; renameBtn.title="Renommer";
+        renameBtn.onclick=async e=>{
+          e.stopPropagation();
+          const newName=prompt("Nom de la session :", sessionName);
+          if(!newName||newName.trim()===sessionName) return;
+          s.meta = s.meta||{};
+          s.meta.name = newName.trim();
+          s.desc = newName.trim();
+          if(isOnline&&currentUser){
+            await supa.from("treasury").update({desc_text:s.desc}).eq("id",s.id);
+          }
+          persistLocal(); render();
+          toast("Session renommée ✓","#A78BFA");
+        };
+        hdr.appendChild(renameBtn);
         card.appendChild(hdr);
         // Stats grid si meta disponible
         if(m.revenu!=null){
@@ -2022,6 +2072,7 @@ const endSession = async () => {
       revenu, marge, margeNette, qty, nbVentes:sessionSales.length,
       fraisStand, partnerDue, startCash, cashFinale:startCash+revenu,
       durStr, startDate,
+      name: `Brocante ${new Date(session.startTs).toLocaleDateString("fr-FR")}`,
       salesIds: sessionSales.map(s=>s.id),
       ventes: sessionSales.map(s=>({
         date:s.date, total:s.total,
