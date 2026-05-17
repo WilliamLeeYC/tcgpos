@@ -1775,6 +1775,53 @@ const renderBrocante = wrap => {
           simple.textContent=s.desc||"Session brocante";
           card.appendChild(simple);
         }
+        // Bouton sync date — visible si le bilan a des ventes liées
+        const hasSalesIds = m.salesIds && m.salesIds.length > 0;
+        const hasVentes   = m.ventes && m.ventes.length > 0;
+        if(hasSalesIds || hasVentes){
+          const syncBtn=document.createElement("button");
+          syncBtn.style.cssText="width:100%;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:9px;color:#60A5FA;padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;margin-top:4px";
+          syncBtn.textContent="📅 Appliquer la date de cette session aux ventes";
+          syncBtn.onclick=async e=>{
+            e.stopPropagation();
+            // Construire la map pour CE bilan uniquement
+            const saleDateMap = new Map();
+            // Méthode 1 : salesIds directs
+            (m.salesIds||[]).forEach(id=>saleDateMap.set(id,{date:s.date,ts:s.ts}));
+            // Méthode 2 : correspondance par contenu pour anciens bilans
+            if(saleDateMap.size===0 && m.ventes){
+              m.ventes.forEach(v=>{
+                const key=`${Math.round(v.total*100)}|${v.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(',')}`;
+                const match=sales.find(sale=>{
+                  const sk=`${Math.round(sale.total*100)}|${sale.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(',')}`;
+                  return sk===key;
+                });
+                if(match) saleDateMap.set(match.id,{date:s.date,ts:s.ts});
+              });
+            }
+            if(saleDateMap.size===0){ toast("Impossible de faire correspondre les ventes","#F59E0B"); return; }
+            let updated=0;
+            const toSync=[];
+            sales=sales.map(sale=>{
+              if(!saleDateMap.has(sale.id)) return sale;
+              const {date,ts}=saleDateMap.get(sale.id);
+              if(sale.date===date&&sale.ts===ts) return sale;
+              toSync.push({id:sale.id,date,ts}); updated++;
+              return {...sale,date,ts};
+            });
+            if(updated===0){ toast("Dates déjà synchronisées ✓","#10B981"); return; }
+            persistLocal();
+            if(isOnline&&currentUser){
+              setSyncStatus("syncing","↑ Sync…");
+              for(const sale of toSync) await supa.from("sales").update({date_str:sale.date,ts:sale.ts}).eq("id",sale.id);
+              setSyncStatus("synced","✓ Sauvegardé");
+            }
+            render();
+            toast(`${updated} vente${updated>1?"s":""} mise${updated>1?"s":""} à jour → ${s.date.slice(0,10)} ✓`,"#60A5FA");
+          };
+          card.appendChild(syncBtn);
+        }
+
         // Bouton export TOUJOURS visible
         const expBtn=document.createElement("button");
         expBtn.style.cssText="width:100%;background:transparent;border:1px solid var(--border2);border-radius:9px;color:var(--text2);padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;margin-top:4px";
@@ -2950,39 +2997,57 @@ const confirmSale = () => {
 // ── NETTOYER SANS S/N ─────────────────────────────────────────────────────────
 // ── SYNC RÉTROACTIF DATES DE VENTE ───────────────────────────────────────────
 const retroSyncSaleDates = async () => {
-  // Construire une map saleId → date de session depuis tous les bilans
-  const saleDateMap = new Map(); // saleId → {date, ts}
-  treasury.filter(e=>e.type==="session_bilan").forEach(bilan=>{
+  const bilans = treasury.filter(e=>e.type==="session_bilan");
+  if(bilans.length===0){ toast("Aucune session brocante trouvée","#F59E0B"); return; }
+
+  if(!confirm(`Synchroniser les dates des ventes avec leurs sessions brocantes ?\n\n${bilans.length} session${bilans.length>1?"s":""} trouvée${bilans.length>1?"s":""}.`)) return;
+
+  setSyncStatus("syncing","↑ Synchronisation…");
+
+  // Map saleId → {date, ts} — deux méthodes selon l'ancienneté du bilan
+  const saleDateMap = new Map();
+
+  bilans.forEach(bilan=>{
+    // Méthode 1 : salesIds directs (nouveaux bilans)
     const ids = bilan.meta?.salesIds || [];
-    ids.forEach(id=>{
-      saleDateMap.set(id, {date: bilan.date, ts: bilan.ts});
-    });
+    ids.forEach(id => saleDateMap.set(id, {date:bilan.date, ts:bilan.ts}));
+
+    // Méthode 2 : correspondance par contenu (anciens bilans sans salesIds)
+    if(ids.length===0 && bilan.meta?.ventes){
+      bilan.meta.ventes.forEach(v=>{
+        // Clé = total arrondi + articles triés
+        const key = `${Math.round(v.total*100)}|${v.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(',')}`;
+        // Chercher la vente correspondante dans l'historique
+        const match = sales.find(s=>{
+          const sk = `${Math.round(s.total*100)}|${s.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(',')}`;
+          return sk===key;
+        });
+        if(match) saleDateMap.set(match.id, {date:bilan.date, ts:bilan.ts});
+      });
+    }
   });
 
   if(saleDateMap.size===0){
-    toast("Aucune vente liée à une session trouvée","#F59E0B");
+    toast("Impossible de faire correspondre des ventes aux sessions","#F59E0B");
+    setSyncStatus("synced","");
     return;
   }
 
-  if(!confirm(`Synchroniser les dates de ${saleDateMap.size} vente${saleDateMap.size>1?"s":""} avec leur session brocante ?`)) return;
-
-  setSyncStatus("syncing","↑ Synchronisation…");
   let updated = 0;
   const toSync = [];
 
   sales = sales.map(s=>{
     if(!saleDateMap.has(s.id)) return s;
     const {date, ts} = saleDateMap.get(s.id);
-    if(s.date===date && s.ts===ts) return s; // déjà à jour
-    toSync.push({...s, date, ts});
+    if(s.date===date && s.ts===ts) return s;
+    toSync.push({id:s.id, date, ts});
     updated++;
     return {...s, date, ts};
   });
 
   if(updated===0){
     toast("Toutes les dates sont déjà synchronisées ✓","#10B981");
-    setSyncStatus("synced","✓");
-    return;
+    setSyncStatus("synced","✓"); return;
   }
 
   persistLocal();
