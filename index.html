@@ -811,11 +811,13 @@ const dbToSale = r => ({
 });
 const treasuryToDb = (t,uid) => ({
   id:t.id, user_id:uid, type:t.type, desc_text:t.desc||"", amount:t.amount,
-  frais_cat:t.fraisCat||null, ts:t.ts||Date.now(), date_str:t.date||""
+  frais_cat:t.fraisCat||null, ts:t.ts||Date.now(), date_str:t.date||"",
+  meta:t.meta||null
 });
 const dbToTreasury = r => ({
   id:r.id, type:r.type, desc:r.desc_text, amount:r.amount,
-  fraisCat:r.frais_cat, ts:r.ts, date:r.date_str
+  fraisCat:r.frais_cat, ts:r.ts, date:r.date_str,
+  meta:r.meta||null
 });
 const partnerPayToDb = (p,uid) => ({
   id:p.id, user_id:uid, partner:p.partner||"fr", amount:p.amount,
@@ -2223,7 +2225,21 @@ const renderSettings = wrap => {
   // ── Danger zone
   section("🔧 Maintenance");
 
-  // Bouton synchronisation rétroactive des dates de vente
+  // Bouton resync meta bilans
+  const resyncMetaBtn=document.createElement("button");
+  resyncMetaBtn.style.cssText="width:100%;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.4);border-radius:12px;color:#A78BFA;padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;margin-bottom:8px";
+  resyncMetaBtn.textContent="🔄 Resynchroniser les bilans brocante";
+  resyncMetaBtn.onclick=async()=>{
+    if(!isOnline||!currentUser){ toast("Connexion requise","#EF4444"); return; }
+    const bilans=treasury.filter(e=>e.type==="session_bilan"&&e.meta);
+    if(bilans.length===0){ toast("Aucun bilan à synchroniser","#F59E0B"); return; }
+    setSyncStatus("syncing","↑ Sync bilans…");
+    const uid=currentUser.id;
+    await supa.from("treasury").upsert(treasury.map(t=>treasuryToDb(t,uid)));
+    setSyncStatus("synced","✓ Sauvegardé");
+    toast(`${bilans.length} bilan${bilans.length>1?"s":""} synchronisé${bilans.length>1?"s":""} ✓`,"#A78BFA");
+  };
+  wrap.appendChild(resyncMetaBtn);
   const syncDatesBtn=document.createElement("button");
   syncDatesBtn.style.cssText="width:100%;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.4);border-radius:12px;color:#60A5FA;padding:12px 0;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;margin-bottom:8px";
   syncDatesBtn.textContent="📅 Synchroniser les dates de vente avec les sessions";
