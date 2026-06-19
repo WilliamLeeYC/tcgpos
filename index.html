@@ -1748,139 +1748,78 @@ const renderBrocante = wrap => {
     // Historique complet des sessions — jamais supprimé
     const pastSessions = [...treasury.filter(e=>e.type==="session_bilan")].sort((a,b)=>b.ts-a.ts);
     if(pastSessions.length>0){
-      const ph=document.createElement("div"); ph.style.cssText="font-weight:700;font-size:14px;margin:14px 0 8px"; ph.textContent=`Sessions précédentes (${pastSessions.length})`;
-      wrap.appendChild(ph);
-      pastSessions.forEach(s=>{
-        const m = s.meta || {};
-        const card=document.createElement("div");
-        card.style.cssText="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer";
-        // Header
-        const sessionName = m.name || s.desc || "Session brocante";
-        const hdr=document.createElement("div"); hdr.style.cssText="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px";
-        hdr.innerHTML=`
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sessionName}</div>
-            <div style="font-size:11px;color:var(--text3);margin-top:2px">${s.date.slice(0,10)} · ${m.durStr||""} · ${m.nbVentes||"?"} ventes · ${m.qty||"?"} articles</div>
-          </div>
-          <div style="text-align:right;flex-shrink:0;margin-left:8px">
-            <div style="font-weight:800;font-size:16px;color:#10B981">+${fmt(s.amount)}€</div>
-            ${m.margeNette!=null?`<div style="font-size:11px;color:#60A5FA">bénéf net: ${fmt(m.margeNette)}€</div>`:""}
-          </div>`;
-        // Bouton renommer
-        const renameBtn=document.createElement("button");
-        renameBtn.style.cssText="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:4px;flex-shrink:0";
-        renameBtn.textContent="✏️"; renameBtn.title="Renommer";
-        renameBtn.onclick=async e=>{
-          e.stopPropagation();
-          const newName=prompt("Nom de la session :", sessionName);
-          if(!newName||newName.trim()===sessionName) return;
-          s.meta = s.meta||{};
-          s.meta.name = newName.trim();
-          s.desc = newName.trim();
-          if(isOnline&&currentUser){
-            await supa.from("treasury").update({desc_text:s.desc}).eq("id",s.id);
-          }
-          persistLocal(); render();
-          toast("Session renommée ✓","#A78BFA");
-        };
-        hdr.appendChild(renameBtn);
-        card.appendChild(hdr);
-        // Stats grid si meta disponible
-        if(m.revenu!=null){
-          const grid=document.createElement("div"); grid.style.cssText="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px";
-          [{lbl:"CA",val:`${fmt(m.revenu)}€`,col:"#10B981"},
-           {lbl:"Marge brute",val:`${fmt(m.marge||0)}€`,col:"#60A5FA"},
-           {lbl:"Caisse finale",val:`${fmt(m.cashFinale||0)}€`,col:"#F59E0B"}].forEach(c=>{
-            grid.innerHTML+=`<div style="background:var(--bg3);border-radius:9px;padding:8px;text-align:center">
-              <div style="font-size:14px;font-weight:800;color:${c.col}">${c.val}</div>
-              <div style="font-size:10px;color:var(--text3)">${c.lbl}</div></div>`;
-          });
-          card.appendChild(grid);
-          if((m.fraisStand||0)>0||(m.partnerDue||0)>0){
-            const ded=document.createElement("div"); ded.style.cssText="font-size:11px;color:var(--text3);margin-bottom:8px;display:flex;gap:10px";
-            if((m.fraisStand||0)>0) ded.innerHTML+=`<span>🏪 Frais stand: -${fmt(m.fraisStand)}€</span>`;
-            if((m.partnerDue||0)>0) ded.innerHTML+=`<span>🤝 Associé: -${fmt(m.partnerDue)}€</span>`;
-            card.appendChild(ded);
-          }
-          if(m.ventes && m.ventes.length>0){
-            const toggle=document.createElement("button");
-            toggle.style.cssText="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:9px;color:var(--text2);padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;margin-bottom:6px";
-            toggle.textContent=`▼ Voir le détail des ventes (${m.ventes.length})`;
-            const detail=document.createElement("div"); detail.style.display="none"; detail.style.marginTop="8px";
-            m.ventes.forEach(v=>{
-              const vrow=document.createElement("div"); vrow.style.cssText="display:flex;justify-content:space-between;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px";
-              vrow.innerHTML=`<div style="flex:1"><div style="color:var(--text3);font-size:10px">${v.date}</div>
-                <div>${v.items.map(i=>`${i.name} ×${i.qty}`).join(", ")}</div></div>
-                <div style="font-weight:700;color:#10B981;margin-left:8px;white-space:nowrap">${fmt(v.total)}€</div>`;
-              detail.appendChild(vrow);
-            });
-            toggle.onclick=()=>{
-              const open=detail.style.display!=="none";
-              detail.style.display=open?"none":"block";
-              toggle.textContent=(open?`▼`:`▲`)+` ${open?"Voir":"Masquer"} le détail des ventes (${m.ventes.length})`;
-            };
-            card.appendChild(toggle); card.appendChild(detail);
-          }
-        } else {
-          // Ancien bilan sans meta — affichage simplifié
-          const simple=document.createElement("div"); simple.style.cssText="font-size:12px;color:var(--text3);margin-bottom:8px";
-          simple.textContent=s.desc||"Session brocante";
-          card.appendChild(simple);
+      const ph=document.createElement("div"); ph.style.cssText="font-weight:700;font-size:14px;margin:14px 0 8px"; ph.textContent=`Sessions précédentes (${pastSessions.length})`; wrap.appendChild(ph);
+      const BILAN_COLORS = [
+        {bg:"rgba(167,139,250,.06)", border:"rgba(167,139,250,.25)"},  // violet
+        {bg:"rgba(16,185,129,.06)",  border:"rgba(16,185,129,.25)"},   // vert
+        {bg:"rgba(245,158,11,.06)",  border:"rgba(245,158,11,.25)"},   // orange
+        {bg:"rgba(96,165,250,.06)",  border:"rgba(96,165,250,.25)"},   // bleu
+        {bg:"rgba(244,114,182,.06)", border:"rgba(244,114,182,.25)"},  // rose
+      ];
+      pastSessions.forEach((s,idx)=>{
+        const col = BILAN_COLORS[idx % BILAN_COLORS.length];
+        const m=s.meta||{};
+        // Retrouver les ventes réelles depuis l'historique
+        let sessionSales=[];
+        if(m.salesIds&&m.salesIds.length>0) sessionSales=sales.filter(sale=>m.salesIds.includes(sale.id));
+        if(sessionSales.length===0&&m.ventes&&m.ventes.length>0){
+          sessionSales=m.ventes.map(v=>{
+            const key=`${Math.round(v.total*100)}|${v.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(",")}`;
+            return sales.find(sale=>{ const sk=`${Math.round(sale.total*100)}|${sale.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(",")}`; return sk===key; });
+          }).filter(Boolean);
         }
-        // Bouton sync date — visible si le bilan a des ventes liées
-        const hasSalesIds = m.salesIds && m.salesIds.length > 0;
-        const hasVentes   = m.ventes && m.ventes.length > 0;
-        if(hasSalesIds || hasVentes){
-          const syncBtn=document.createElement("button");
-          syncBtn.style.cssText="width:100%;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:9px;color:#60A5FA;padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;margin-top:4px";
-          syncBtn.textContent="📅 Appliquer la date de cette session aux ventes";
-          syncBtn.onclick=async e=>{
-            e.stopPropagation();
-            // Construire la map pour CE bilan uniquement
-            const saleDateMap = new Map();
-            // Méthode 1 : salesIds directs
-            (m.salesIds||[]).forEach(id=>saleDateMap.set(id,{date:s.date,ts:s.ts}));
-            // Méthode 2 : correspondance par contenu pour anciens bilans
-            if(saleDateMap.size===0 && m.ventes){
-              m.ventes.forEach(v=>{
-                const key=`${Math.round(v.total*100)}|${v.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(',')}`;
-                const match=sales.find(sale=>{
-                  const sk=`${Math.round(sale.total*100)}|${sale.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(',')}`;
-                  return sk===key;
-                });
-                if(match) saleDateMap.set(match.id,{date:s.date,ts:s.ts});
-              });
-            }
-            if(saleDateMap.size===0){ toast("Impossible de faire correspondre les ventes","#F59E0B"); return; }
-            let updated=0;
-            const toSync=[];
-            sales=sales.map(sale=>{
-              if(!saleDateMap.has(sale.id)) return sale;
-              const {date,ts}=saleDateMap.get(sale.id);
-              if(sale.date===date&&sale.ts===ts) return sale;
-              toSync.push({id:sale.id,date,ts}); updated++;
-              return {...sale,date,ts};
-            });
-            if(updated===0){ toast("Dates déjà synchronisées ✓","#10B981"); return; }
-            persistLocal();
-            if(isOnline&&currentUser){
-              setSyncStatus("syncing","↑ Sync…");
-              for(const sale of toSync) await supa.from("sales").update({date_str:sale.date,ts:sale.ts}).eq("id",sale.id);
-              setSyncStatus("synced","✓ Sauvegardé");
-            }
-            render();
-            toast(`${updated} vente${updated>1?"s":""} mise${updated>1?"s":""} à jour → ${s.date.slice(0,10)} ✓`,"#60A5FA");
-          };
-          card.appendChild(syncBtn);
+        // Recalcul stats depuis ventes réelles
+        const revenu=sessionSales.length>0?sessionSales.reduce((a,v)=>a+v.total,0):(m.revenu??s.amount);
+        const marge=sessionSales.length>0?sessionSales.reduce((a,v)=>a+v.items.reduce((b,i)=>b+(i.price-(i.cost||0))*i.qty,0),0):(m.marge??0);
+        const qty=sessionSales.length>0?sessionSales.reduce((a,v)=>a+v.items.reduce((b,i)=>b+i.qty,0),0):(m.qty??0);
+        const partnerDue=sessionSales.length>0?sessionSales.reduce((a,v)=>a+v.items.filter(i=>i.shared||(i.partner&&i.partner!=="none")).reduce((b,i)=>b+(i.price-(i.cost||0))*i.qty/2,0),0):(m.partnerDue??0);
+        const fraisStand=m.fraisStand??0;
+        const margeNette=marge-fraisStand-partnerDue;
+        const nbVentes=sessionSales.length||m.nbVentes||0;
+        const sessionName=m.name||s.desc||"Session brocante";
+
+        const card=document.createElement("div"); card.style.cssText=`background:${col.bg};border:1px solid ${col.border};border-radius:14px;padding:14px;margin-bottom:10px`;
+        let expanded=false;
+        const body=document.createElement("div"); body.style.display="none";
+
+        // Header
+        const hdr=document.createElement("div"); hdr.style.cssText="display:flex;justify-content:space-between;align-items:flex-start;cursor:pointer";
+        hdr.onclick=()=>{ expanded=!expanded; body.style.display=expanded?"block":"none"; arrow.textContent=expanded?"▲":"▼"; };
+        const hdrL=document.createElement("div"); hdrL.style.cssText="flex:1;min-width:0";
+        hdrL.innerHTML=`<div style="font-weight:700;font-size:14px">${sessionName}</div><div style="font-size:11px;color:var(--text3);margin-top:2px">${s.date.slice(0,10)} · ${nbVentes} vente${nbVentes!==1?"s":""} · ${qty} article${qty!==1?"s":""}</div>`;
+        const hdrR=document.createElement("div"); hdrR.style.cssText="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:8px";
+        hdrR.innerHTML=`<div style="text-align:right"><div style="font-weight:800;font-size:15px;color:#10B981">+${fmt(revenu)}€</div><div style="font-size:11px;color:#60A5FA">net: ${fmt(margeNette)}€</div></div>`;
+        const arrow=document.createElement("span"); arrow.textContent="▼"; arrow.style.cssText="color:var(--text3);font-size:12px";
+        const renBtn=document.createElement("button"); renBtn.style.cssText="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:2px"; renBtn.textContent="✏️";
+        renBtn.onclick=async e=>{ e.stopPropagation(); const n=prompt("Nom :",sessionName); if(!n||n.trim()===sessionName) return; s.meta=s.meta||{}; s.meta.name=n.trim(); s.desc=n.trim(); if(isOnline&&currentUser) await supa.from("treasury").update({desc_text:s.desc,meta:s.meta}).eq("id",s.id); persistLocal(); render(); toast("Renommée ✓","#A78BFA"); };
+        hdrR.append(renBtn,arrow); hdr.append(hdrL,hdrR); card.appendChild(hdr);
+
+        // Body stats
+        const grid=document.createElement("div"); grid.style.cssText="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:10px 0 8px";
+        [{lbl:"CA",val:`${fmt(revenu)}€`,col:"#10B981"},{lbl:"Marge brute",val:`${fmt(marge)}€`,col:"#60A5FA"},{lbl:"Bénéf net",val:`${fmt(margeNette)}€`,col:margeNette>=0?"#10B981":"#EF4444"}].forEach(c=>{
+          grid.innerHTML+=`<div style="background:var(--bg3);border-radius:9px;padding:8px;text-align:center"><div style="font-size:13px;font-weight:800;color:${c.col}">${c.val}</div><div style="font-size:10px;color:var(--text3)">${c.lbl}</div></div>`;
+        }); body.appendChild(grid);
+
+        if(fraisStand>0||partnerDue>0){ const ded=document.createElement("div"); ded.style.cssText="font-size:11px;color:var(--text3);margin-bottom:8px;display:flex;gap:10px;flex-wrap:wrap"; if(fraisStand>0) ded.innerHTML+=`<span>🏪 Frais: -${fmt(fraisStand)}€</span>`; if(partnerDue>0) ded.innerHTML+=`<span>🤝 Associé: -${fmt(partnerDue)}€</span>`; body.appendChild(ded); }
+
+        // Détail ventes
+        if(sessionSales.length>0){
+          const dtitle=document.createElement("div"); dtitle.style.cssText="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px"; dtitle.textContent=`${sessionSales.length} vente${sessionSales.length!==1?"s":""}`; body.appendChild(dtitle);
+          sessionSales.forEach(v=>{ const vm=v.items.reduce((a,i)=>(i.price-(i.cost||0))*i.qty+a,0); const vrow=document.createElement("div"); vrow.style.cssText="display:flex;justify-content:space-between;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px"; vrow.innerHTML=`<div style="flex:1;min-width:0"><div style="color:var(--text3);font-size:10px">${v.date}</div><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${v.items.map(i=>i.name+(i.qty>1?` ×${i.qty}`:"")).join(", ")}</div></div><div style="text-align:right;flex-shrink:0;margin-left:8px"><div style="font-weight:700;color:#10B981">${fmt(v.total)}€</div><div style="font-size:10px;color:#60A5FA">+${fmt(vm)}€</div></div>`; body.appendChild(vrow); });
+          // Sync date
+          const syncBtn=document.createElement("button"); syncBtn.style.cssText="width:100%;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:9px;color:#60A5FA;padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;margin-top:10px"; syncBtn.textContent="📅 Appliquer la date de cette session aux ventes";
+          syncBtn.onclick=async e=>{ e.stopPropagation(); let upd=0; const ts2=[]; sales=sales.map(sale=>{ if(!sessionSales.find(sv=>sv.id===sale.id)) return sale; if(sale.date===s.date&&sale.ts===s.ts) return sale; ts2.push({id:sale.id,date:s.date,ts:s.ts}); upd++; return {...sale,date:s.date,ts:s.ts}; }); if(upd===0){toast("Déjà synchronisées ✓","#10B981");return;} persistLocal(); if(isOnline&&currentUser){ setSyncStatus("syncing","↑ Sync…"); for(const sv of ts2) await supa.from("sales").update({date_str:sv.date,ts:sv.ts}).eq("id",sv.id); setSyncStatus("synced","✓"); } render(); toast(`${upd} vente${upd>1?"s":""} mises à jour ✓`,"#60A5FA"); };
+          body.appendChild(syncBtn);
+        } else {
+          const noS=document.createElement("div"); noS.style.cssText="font-size:12px;color:var(--text3);padding:8px 0;text-align:center"; noS.innerHTML="Aucune vente trouvée dans l'historique<br><span style='font-size:10px'>Recréer la session pour lier les ventes</span>"; body.appendChild(noS);
         }
 
-        // Bouton export TOUJOURS visible
-        const expBtn=document.createElement("button");
-        expBtn.style.cssText="width:100%;background:transparent;border:1px solid var(--border2);border-radius:9px;color:var(--text2);padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;margin-top:4px";
-        expBtn.textContent="📄 Exporter ce bilan (.txt)";
-        expBtn.onclick=e=>{ e.stopPropagation(); exportBilanTxt(s); };
-        card.appendChild(expBtn);
-        wrap.appendChild(card);
+        // Export
+        const expBtn=document.createElement("button"); expBtn.style.cssText="width:100%;background:transparent;border:1px solid var(--border2);border-radius:9px;color:var(--text2);padding:6px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;margin-top:6px"; expBtn.textContent="📄 Exporter ce bilan (.txt)";
+        expBtn.onclick=e=>{ e.stopPropagation(); exportBilanTxt({...s,meta:{...m,revenu,marge,margeNette,qty,nbVentes,fraisStand,partnerDue,startCash:m.startCash||0,cashFinale:(m.startCash||0)+revenu,durStr:m.durStr||"—",startDate:s.date,ventes:sessionSales.map(v=>({date:v.date,total:v.total,items:v.items}))}}); };
+        body.appendChild(expBtn);
+
+        card.appendChild(body); wrap.appendChild(card);
       });
     }
     return;
@@ -2231,13 +2170,38 @@ const renderSettings = wrap => {
   resyncMetaBtn.textContent="🔄 Resynchroniser les bilans brocante";
   resyncMetaBtn.onclick=async()=>{
     if(!isOnline||!currentUser){ toast("Connexion requise","#EF4444"); return; }
-    const bilans=treasury.filter(e=>e.type==="session_bilan"&&e.meta);
-    if(bilans.length===0){ toast("Aucun bilan à synchroniser","#F59E0B"); return; }
+    const bilans=treasury.filter(e=>e.type==="session_bilan");
+    if(bilans.length===0){ toast("Aucun bilan trouvé","#F59E0B"); return; }
     setSyncStatus("syncing","↑ Sync bilans…");
     const uid=currentUser.id;
+    // Reconstruire le meta de chaque bilan depuis les ventes réelles
+    bilans.forEach(b=>{
+      const m=b.meta||{};
+      let sessionSales=[];
+      if(m.salesIds&&m.salesIds.length>0) sessionSales=sales.filter(s=>m.salesIds.includes(s.id));
+      if(sessionSales.length===0&&m.ventes&&m.ventes.length>0){
+        sessionSales=m.ventes.map(v=>{
+          const key=`${Math.round(v.total*100)}|${v.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(",")}`;
+          return sales.find(s=>{ const sk=`${Math.round(s.total*100)}|${s.items.map(i=>`${i.name.trim().toLowerCase()}|${i.qty}`).sort().join(",")}`; return sk===key; });
+        }).filter(Boolean);
+      }
+      if(sessionSales.length>0){
+        const revenu=sessionSales.reduce((a,v)=>a+v.total,0);
+        const marge=sessionSales.reduce((a,v)=>a+v.items.reduce((x,i)=>x+(i.price-(i.cost||0))*i.qty,0),0);
+        const qty=sessionSales.reduce((a,v)=>a+v.items.reduce((x,i)=>x+i.qty,0),0);
+        const partnerDue=sessionSales.reduce((a,v)=>a+v.items.filter(i=>i.shared||(i.partner&&i.partner!=="none")).reduce((x,i)=>x+(i.price-(i.cost||0))*i.qty/2,0),0);
+        const fraisStand=m.fraisStand||0;
+        b.meta={...m, revenu, marge, margeNette:marge-fraisStand-partnerDue, qty,
+          nbVentes:sessionSales.length, partnerDue, fraisStand,
+          salesIds:sessionSales.map(s=>s.id),
+          ventes:sessionSales.map(s=>({date:s.date,total:s.total,items:s.items}))};
+      }
+    });
+    persistLocal();
     await supa.from("treasury").upsert(treasury.map(t=>treasuryToDb(t,uid)));
     setSyncStatus("synced","✓ Sauvegardé");
-    toast(`${bilans.length} bilan${bilans.length>1?"s":""} synchronisé${bilans.length>1?"s":""} ✓`,"#A78BFA");
+    render();
+    toast(`${bilans.length} bilan${bilans.length>1?"s":""} resynchronisé${bilans.length>1?"s":""} ✓`,"#A78BFA");
   };
   wrap.appendChild(resyncMetaBtn);
   const syncDatesBtn=document.createElement("button");
